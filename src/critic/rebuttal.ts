@@ -210,8 +210,7 @@ Always emit one meta-level observation about the agent's approach:
 ## Verdict mechanics
 - attack_angles: 1-3 only when you actually find cheats. Do not pad.
 - attack_angles >= 1 → verdict = "refuted"
-- attack_angles = 0 → verdict = "unable_to_refute" (only for tryIndex >= 2;
-  tryIndex = 1 must have at least one attack)
+- attack_angles = 0 → verdict = "unable_to_refute"
 - evidence must be a verbatim quote from diff / verify_stdout / verify_stderr / agent_stdout
 - **Always start evidence with a line_ref**: "path/to/file.ts:L42-L48".
   If you cannot cite specific lines, do not emit attack_angles (leave empty,
