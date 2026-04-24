@@ -30,6 +30,7 @@ import {
   isCliProvider,
 } from "./llm/types.ts";
 import { estimateCostUsd } from "./llm/cost.ts";
+import { withRetry } from "./llm/retry.ts";
 
 export { LLMFriendlyError };
 export type { ProviderName, Tier };
@@ -104,16 +105,41 @@ function resolveCall(modelOrTier: string): { provider: LLMProvider; model: strin
   return { provider: anthropicProvider, model: modelOrTier };
 }
 
+/** provider.call を withRetry でラップする共通ヘルパ。
+ *  overloaded / 5xx / ECONNRESET 系は自動 retry (3 回、~29s backoff)。
+ *  retry 発火時は stderr に 1 行出して透明性を担保する。 */
+function callWithRetry(
+  provider: LLMProvider,
+  params: { model: string; system: string; user: string; maxTokens: number; jsonMode: boolean },
+  label?: string,
+): Promise<import("./llm/types.ts").RawResponse> {
+  return withRetry(() => provider.call(params), {
+    onRetry: ({ attempt, error, delayMs }) => {
+      const tag = label ? ` [${label}]` : "";
+      const msg = (error as any)?.message ?? String(error);
+      const short = msg.length > 120 ? msg.slice(0, 120) + "..." : msg;
+      process.stderr.write(
+        `  ⚠ transient error${tag} (${provider.name}), retrying in ${Math.round(delayMs / 1000)}s ` +
+        `(attempt ${attempt + 1}): ${short}\n`,
+      );
+    },
+  });
+}
+
 export async function callText(
   modelOrTier: string,
   system: string,
   user: string,
   maxTokens = 4096,
-  _label?: string,
+  label?: string,
   meta?: CallMeta,
 ): Promise<string> {
   const { provider, model } = resolveCall(modelOrTier);
-  const res = await provider.call({ model, system, user, maxTokens, jsonMode: false });
+  const res = await callWithRetry(
+    provider,
+    { model, system, user, maxTokens, jsonMode: false },
+    label,
+  );
   if (meta) {
     meta.usage = res.usage;
     meta.model_name = res.model;
@@ -127,11 +153,15 @@ export async function callJson<T = any>(
   system: string,
   user: string,
   maxTokens = 4096,
-  _label?: string,
+  label?: string,
   meta?: CallMeta,
 ): Promise<T> {
   const { provider, model } = resolveCall(modelOrTier);
-  const res = await provider.call({ model, system, user, maxTokens, jsonMode: true });
+  const res = await callWithRetry(
+    provider,
+    { model, system, user, maxTokens, jsonMode: true },
+    label,
+  );
   if (meta) {
     meta.usage = res.usage;
     meta.model_name = res.model;
