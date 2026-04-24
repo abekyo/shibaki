@@ -10,14 +10,16 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoSelectCritic } from "./autoFallback.ts";
 
-// scripts/demo.ts と同じバグ fixture (本ファイルが正本)
-const BUGGY_CODE = `// Shibaki demo target — このファイルにわざとバグが入っています
-// Shibaki がこれを修正して "なぜ" を 1 行で説明する様子を見てください
+// scripts/demo.ts と同じバグ fixture (本ファイルが正本)。
+// 注意: 意図的に「BUG の位置を示すコメント」は入れない。agent は failing tests だけを
+// 手がかりに bug を検出する必要がある (コメントで答えを教えると demo が実力試験にならない)。
+// コメント / コード ともに英語で統一 — asciinema 録画で言語混在を避けるため。
+const BUGGY_CODE = `// Shibaki demo target — intentional bugs live in this file.
+// Shibaki fixes them and prints a one-line "why" explanation.
 
 export function factorial(n: number): number {
   if (n <= 1) return 1;
   let result = 1;
-  // BUG: i <= n であるべきところを i < n
   for (let i = 2; i < n; i++) {
     result *= i;
   }
@@ -32,7 +34,6 @@ export function fibonacci(n: number): number {
     a = b;
     b = next;
   }
-  // BUG: b を返すべき
   return a;
 }
 `;
