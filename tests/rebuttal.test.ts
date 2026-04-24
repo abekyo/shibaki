@@ -70,13 +70,29 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
   });
 });
 
-describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1)", () => {
-  test("tryIndex=1 で attack_angles=0 でも unable_to_refute は無効化、refuted 強制", () => {
+describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1, Defect 2 gate と併走)", () => {
+  // 穴 1 の原意: tryIndex=1 で opus が早々に unable_to_refute を返すのを塞ぐ。
+  // Defect 2 の consistency gate 導入後、「reason に具体的な fault 指摘がある」なら
+  // 引き続き refute 強制。逆に「reason が空 / positive」なら gate が
+  // unable_to_refute に矯正する (中身の無い refute は出さない)。
+  test("tryIndex=1 + attack_angles=0 + reason に fault signal → refuted 強制 (穴 1)", () => {
+    const r = parseRebuttal(
+      {
+        verdict: "unable_to_refute",
+        attack_angles: [],
+        reason: "Agent failed to cover the empty-string case.",
+      },
+      input({ tryIndex: 1 }),
+    );
+    expect(r.verdict).toBe("refuted");
+  });
+
+  test("tryIndex=1 + attack_angles=0 + reason 空/positive → Defect 2 gate が unable_to_refute に矯正", () => {
     const r = parseRebuttal(
       { verdict: "unable_to_refute", attack_angles: [] },
       input({ tryIndex: 1 }),
     );
-    expect(r.verdict).toBe("refuted");
+    expect(r.verdict).toBe("unable_to_refute");
   });
 
   test("tryIndex=2 以降は attack_angles=0 なら unable_to_refute 通す", () => {

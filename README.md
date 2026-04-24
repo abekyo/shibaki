@@ -19,7 +19,7 @@ With `--ask`, Shibaki pauses to ask you a 30-second meta question, then redirect
 
 Read the design philosophy in [docs/why-shibaki.md](./docs/why-shibaki.md).
 
-[![asciicast](https://asciinema.org/a/7DGghK2axV9HjvsG.svg)](https://asciinema.org/a/7DGghK2axV9HjvsG)
+[![asciicast](https://asciinema.org/a/xkALquNFdxsEkBdL.svg)](https://asciinema.org/a/xkALquNFdxsEkBdL)
 
 ---
 
@@ -38,15 +38,33 @@ lists what's set up (Bun, Claude Code, an API key) and what isn't:
 bunx shibaki@latest
 ```
 
-If the diagnostic flagged anything, fill in the gaps:
+If the diagnostic flagged anything, fill in the gaps. Shibaki supports two run modes — and **picks one for you automatically** if you haven't set `LLM_PROVIDER_CRITICAL`:
+
+> **Zero-setup path (most common)** — if `claude` is on your PATH (via `claude login`) and no critic API key is in your env, Shibaki auto-selects Plan mode with the opus tier critic. You don't need to export anything; the selection is announced on stderr when it fires. This is what the demo relies on.
+
+**Plan mode** — no API key. Uses your Claude Code plan (or Gemini Code Assist / Codex plan):
 
 ```bash
-# Claude Code (the working agent)
+# Install + login to the agent CLI
 npm install -g @anthropic-ai/claude-code
 claude login
 
-# A critic API key — must be a different provider than the agent.
-# Gemini is free, no card required: https://aistudio.google.com/apikey
+# That's it — Shibaki will auto-select anthropic-cli as critic.
+# To pin explicitly (recommended for CI / reproducibility):
+export LLM_PROVIDER=anthropic-cli
+export LLM_PROVIDER_CRITICAL=anthropic-cli
+export LLM_MODEL_CRITICAL=opus
+```
+
+**API mode** — different-provider API key for the critic (classic setup):
+
+```bash
+# Agent CLI
+npm install -g @anthropic-ai/claude-code
+claude login
+
+# Critic API key — different provider than the agent.
+# Gemini has a free tier: https://aistudio.google.com/apikey
 export GEMINI_API_KEY=AIza...
 export LLM_PROVIDER_CRITICAL=gemini
 ```
@@ -58,9 +76,9 @@ Claude fix them, and re-runs the tests:
 bunx shibaki@latest demo
 ```
 
-Why a separate critic key? Shibaki by default routes the critic to a *different* LLM
-provider than the working agent. This avoids self-critique blind spots where a model
-defends its own output. See [SECURITY.md](./SECURITY.md) for the override.
+Why does Shibaki route the critic to a different provider (or a different model, in
+Plan mode)? To avoid self-critique blind spots where a model defends its own output.
+See [SECURITY.md](./SECURITY.md) for overrides.
 
 ---
 
@@ -146,7 +164,26 @@ See [SECURITY.md](./SECURITY.md) for details.
 
 ---
 
-## Configuration (API key combinations)
+## Configuration (run modes)
+
+### Plan mode — no API key
+
+Uses the local agent CLI (already logged in) for *both* main and critic.
+Blind-spot mitigation happens via **model tiering** (e.g. main=sonnet, critic=opus).
+
+| mode | main agent | critic | required env |
+|---|---|---|---|
+| **Claude Code plan** (tested) | `claude -p --model sonnet` | `anthropic-cli` (opus) | `LLM_PROVIDER=anthropic-cli`, `LLM_PROVIDER_CRITICAL=anthropic-cli`, `LLM_MODEL_CRITICAL=opus` |
+| Gemini Code Assist (experimental) | `gemini` | `gemini-cli` | `LLM_PROVIDER=gemini-cli`, `LLM_PROVIDER_CRITICAL=gemini-cli` |
+| Codex plan (experimental) | `codex` | `codex-cli` | `LLM_PROVIDER=codex-cli`, `LLM_PROVIDER_CRITICAL=codex-cli` |
+
+> **Experimental note**: `gemini-cli` and `codex-cli` assume specific flag shapes (`gemini -p --model X`, `codex exec --model X --skip-git-repo-check`) that vary between CLI versions. If invocation fails, either upgrade/downgrade the vendor CLI or wrap it in a shell script and point `GEMINI_CLI_BIN` / `CODEX_CLI_BIN` at the wrapper. `anthropic-cli` (claude) is the battle-tested path.
+
+Same-family main/critic in Plan mode is auto-allowed (different models already reduce
+the blind spot). Bin name can be overridden via `CLAUDE_CLI_BIN` / `GEMINI_CLI_BIN` /
+`CODEX_CLI_BIN` if your installation uses a different name.
+
+### API mode — different-provider API key
 
 | mode | main agent | critic | required keys |
 |---|---|---|---|
@@ -155,7 +192,7 @@ See [SECURITY.md](./SECURITY.md) for details.
 | Anthropic critic | Claude Code plan | Anthropic API | `ANTHROPIC_API_KEY` (separate from your plan) |
 | Full-API | Anthropic API | OpenAI / Gemini API | both |
 
-Same provider for main and critic is rejected at startup
+In API mode, same-family main/critic is rejected at startup
 (set `SHIBAKI_ALLOW_SAME_PROVIDER=1` to opt out).
 
 ---

@@ -210,8 +210,7 @@ Always emit one meta-level observation about the agent's approach:
 ## Verdict mechanics
 - attack_angles: 1-3 only when you actually find cheats. Do not pad.
 - attack_angles >= 1 → verdict = "refuted"
-- attack_angles = 0 → verdict = "unable_to_refute" (only for tryIndex >= 2;
-  tryIndex = 1 must have at least one attack)
+- attack_angles = 0 → verdict = "unable_to_refute"
 - evidence must be a verbatim quote from diff / verify_stdout / verify_stderr / agent_stdout
 - **Always start evidence with a line_ref**: "path/to/file.ts:L42-L48".
   If you cannot cite specific lines, do not emit attack_angles (leave empty,
@@ -501,6 +500,41 @@ function sanitizePatternName(raw: string): string {
   return forced || "unknown";
 }
 
+/** verdict=refuted のときに reason に「具体的な fault 指摘」が入っているかを判定する gate。
+ *  単純な negative word 検索は "no cheats detected" のような否定表現で誤判定するので、
+ *  多語句 (fault を積極的に指摘しないと出ない phrase) で一致を見る。
+ *
+ *  dogfood run (2026-04-24) で opus が verdict=refuted + attack_angles=[] +
+ *  "The extraction is correct ... verify passes clean" な reason を emit した
+ *  のを catch するための gate。verify が通っていて attack が無く reason にも
+ *  fault signal が無いなら、それは critic の自己矛盾出力なので unable_to_refute に
+ *  矯正する。試験のため export している。
+ */
+export function hasFaultSignal(reason: string): boolean {
+  const s = reason.toLowerCase();
+  // これらの phrase が reason に含まれていれば「何か具体的な fault を指摘している」とみなす。
+  // 否定形 ("no X") で誤 match しないよう、多語句 or 特有 token を採用。
+  const faultPhrases = [
+    // 攻撃の典型句
+    "agent claim", "but actually", "but in reality",
+    "failed to", "did not implement", "did not include", "did not handle",
+    "not actually",
+    // Mode A cheat patterns (prompt と同期)
+    "hardcoded", "stubbed", "placeholder", "bypass", "silenc",
+    "hallucinat", "weakened", "inverted", "fabricat",
+    "@ts-ignore", "@ts-expect", "eslint-disable",
+    ".skip(", ".only(", "xit(",
+    // Mode C scope drift
+    "scope drift", "out of scope", "unauthorized",
+    "over-reach", "overreach", "drifted", "off-task",
+    "beyond what",
+    // 破綻表現
+    "does not match", "doesn't match",
+    "no actual change", "no_actual_change",
+  ];
+  return faultPhrases.some((p) => s.includes(p));
+}
+
 export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
   const ALLOWED_KINDS: CounterExampleKind[] = ["failing_test", "input_case", "verify_bypass", "none"];
   const ce = raw?.counter_example ?? {};
@@ -542,6 +576,24 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
   } else if (input.tryIndex === 1) {
     finalVerdict = "refuted";
   } else {
+    finalVerdict = "unable_to_refute";
+  }
+
+  // Defect 2 (consistency gate): verdict=refuted なのに attack_angles が空かつ
+  // reason にも具体的な fault 指摘が入っていない self-contradictory state を
+  // 矯正する。この状態は「opus が try 1 の暗黙プレッシャに屈して refute 側の
+  // 箱を埋めたが、実際には攻撃対象が無かった」ときに起きる (dogfood 2026-04-24 で確認)。
+  // 顕現した症状: "✗ critic: refuted — The extraction is correct ... verify passes clean"
+  //
+  // ゲート条件: verify.ok=true かつ attack_angles=0 かつ reason に fault signal 無し。
+  // → finalVerdict を unable_to_refute に下げる (以降の effective* 処理が自動的に
+  //   attack_angles=[] / preempt_hint 中立化 / reason 空化を行う)。
+  if (
+    finalVerdict === "refuted" &&
+    input.verifyOk &&
+    attack_angles.length === 0 &&
+    !hasFaultSignal(asString(raw?.reason))
+  ) {
     finalVerdict = "unable_to_refute";
   }
 

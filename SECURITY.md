@@ -28,6 +28,11 @@ provider and critic provider differ:
 main=anthropic + critic=openai → agent (claude -p) cannot see OPENAI_API_KEY
 ```
 
+In **Plan mode** (CLI-backed critic — `anthropic-cli` / `gemini-cli` / `codex-cli`)
+the critic holds no API key at all. The isolation step becomes a no-op for secrets,
+but critic-side configuration (`LLM_PROVIDER_CRITICAL`, `LLM_MODEL_CRITICAL`, etc.)
+is still stripped from the agent's env to prevent disclosure of the critic's setup.
+
 opt-out: `SHIBAKI_ALLOW_AGENT_SECRETS=1` (for multi-provider agent CLIs that
 need access).
 
@@ -38,7 +43,12 @@ Missing / malformed / same-provider all exit 2 with explicit guidance.
 [src/cli/preflight.ts](./src/cli/preflight.ts):
 - Missing key → exit with hint that includes a URL to obtain one
 - Malformed (`sk-` / `sk-ant-` prefix check) → exit
-- main provider == critic provider → reject (opt-out: `SHIBAKI_ALLOW_SAME_PROVIDER=1`)
+- main/critic in the same provider family (e.g. both `anthropic` API) → reject
+  (opt-out: `SHIBAKI_ALLOW_SAME_PROVIDER=1`)
+- Plan mode (CLI critic): the API key check is skipped (no key exists), and
+  same-family main/critic is auto-allowed on the assumption that the user is
+  relying on model tiering (e.g. sonnet → opus) to mitigate the blind spot.
+  CLI availability is verified by `shibaki doctor`.
 
 ### Cross-provider enforcement
 Critic uses a different provider from main by default ([src/llm.ts](./src/llm.ts)).

@@ -3,6 +3,7 @@
 import { parseRunArgs, ArgError } from "./args.ts";
 import { runLoop } from "../loop/orchestrator.ts";
 import { runAllPreflight } from "./preflight.ts";
+import { autoSelectCritic } from "./autoFallback.ts";
 
 export async function cmdRun(argv: string[]): Promise<number> {
   let args;
@@ -24,8 +25,15 @@ export async function cmdRun(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Pre-flight: API key / provider 分離を起動時に検証 (fail-closed)
-  const preflightFail = runAllPreflight(process.env);
+  // Zero-setup fallback: 何も export してないユーザーの critic を Plan mode に自動切替。
+  // 発動時は stderr に 1 行出して透明性を担保。明示指定 / API key あり / claude 無しのどれかで no-op。
+  const fallback = await autoSelectCritic(process.env);
+  if (fallback.apply && fallback.message) {
+    process.stderr.write(`${fallback.message}\n`);
+  }
+
+  // Pre-flight: API key / provider 分離 / CLI 可用性を起動時に検証 (fail-closed)
+  const preflightFail = await runAllPreflight(process.env);
   if (preflightFail) {
     process.stderr.write(`✗ pre-flight check failed: ${preflightFail.reason}\n`);
     process.stderr.write(`  ${preflightFail.hint}\n`);

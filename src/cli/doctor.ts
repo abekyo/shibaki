@@ -5,7 +5,14 @@
 import { spawn } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
-import { detectCriticProvider, detectMainProvider, type Provider } from "../agent/secretIsolation.ts";
+import {
+  detectCriticProvider,
+  detectMainProvider,
+  type Provider,
+} from "../agent/secretIsolation.ts";
+import { isCliProvider, providerFamily, type ProviderName } from "../llm/types.ts";
+import { CLI_INFO } from "../llm/providers/cliShared.ts";
+import { autoSelectCritic } from "./autoFallback.ts";
 
 type CheckStatus = "ok" | "warn" | "error";
 
@@ -25,11 +32,26 @@ export async function cmdDoctor(argv: string[]): Promise<number> {
   process.stdout.write("Shibaki doctor — environment diagnostic\n");
   process.stdout.write("==========================================\n\n");
 
+  // Auto-fallback を先に評価: key 無し + claude あり なら LLM_PROVIDER_CRITICAL を
+  // anthropic-cli に書き換えた上で以降の check を進める。
+  const fallback = await autoSelectCritic(process.env);
+
   const checks: CheckResult[] = [];
 
   checks.push(await checkBun());
   checks.push(await checkClaude());
-  checks.push(checkCriticKey());
+  if (fallback.apply) {
+    checks.push({
+      status: "warn",
+      label: "Auto-fallback",
+      detail: "(Plan mode selected)",
+      hint:
+        `${fallback.reason}\n` +
+        `Critic routed to anthropic-cli (model: opus).\n` +
+        `To opt out: export LLM_PROVIDER_CRITICAL=gemini   # or openai / anthropic`,
+    });
+  }
+  checks.push(await checkCriticBackend());
   checks.push(checkProviderSeparation());
   checks.push(checkGeminiHint());
   checks.push(await checkGitRepo());
@@ -99,20 +121,68 @@ async function checkClaude(): Promise<CheckResult> {
   return { status: "ok", label: "claude command", detail: which.stdout.trim() };
 }
 
-const KEY_NAME: Record<Provider, string> = {
+const KEY_NAME: Record<"anthropic" | "openai" | "gemini", string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
   gemini: "GEMINI_API_KEY",
 };
 
-const KEY_HINT_URL: Record<Provider, string> = {
+const KEY_HINT_URL: Record<"anthropic" | "openai" | "gemini", string> = {
   anthropic: "https://console.anthropic.com",
   openai: "https://platform.openai.com/api-keys",
   gemini: "https://aistudio.google.com/apikey (free tier available, recommended)",
 };
 
-function checkCriticKey(): CheckResult {
+
+/** CLI provider は API key の代わりに bin が PATH 上にあるかを確認。
+ *  API provider は従来通り key check。 */
+async function checkCriticBackend(): Promise<CheckResult> {
   const provider = detectCriticProvider();
+  if (isCliProvider(provider)) {
+    return await checkCliProvider(provider as "anthropic-cli" | "gemini-cli" | "codex-cli");
+  }
+  return checkCriticKey();
+}
+
+async function checkCliProvider(
+  provider: "anthropic-cli" | "gemini-cli" | "codex-cli",
+): Promise<CheckResult> {
+  const info = CLI_INFO[provider];
+  const bin = process.env[info.envVar]?.trim() || info.defaultBin;
+  const which = await execCapture("which", [bin]);
+  if (which.exitCode !== 0) {
+    return {
+      status: "error",
+      label: `Critic CLI (${provider} / bin: ${bin})`,
+      detail: "(not in PATH)",
+      hint: info.install,
+    };
+  }
+  // Smoke: --version を 5 秒 timeout で叩いて、bin が実際に起動可能か確認。
+  // これで「npm install は成功してるが node バージョン問題で exec 失敗」
+  // みたいな壊れた install を早期検知できる。login 状態までは検証しない
+  // (それは run 時に初めて分かる — API 呼ぶまで login は assert しない)。
+  const smoke = await execCapture(bin, ["--version"], undefined, 5000);
+  if (smoke.exitCode !== 0) {
+    return {
+      status: "warn",
+      label: `Critic CLI (${provider})`,
+      detail: `(found at ${which.stdout.trim()}, but '${bin} --version' failed)`,
+      hint:
+        `exit ${smoke.exitCode}. Try re-installing:\n${info.install}\n` +
+        `(or wrap in a shell script and set ${info.envVar}=/path/to/wrapper)`,
+    };
+  }
+  const versionLine = smoke.stdout.trim().split(/\r?\n/)[0]?.slice(0, 40) ?? "";
+  return {
+    status: "ok",
+    label: `Critic CLI (${provider})`,
+    detail: `(${which.stdout.trim()}${versionLine ? `, v: ${versionLine}` : ""})`,
+  };
+}
+
+function checkCriticKey(): CheckResult {
+  const provider = detectCriticProvider() as "anthropic" | "openai" | "gemini";
   const keyName = KEY_NAME[provider];
   const value = process.env[keyName];
 
@@ -158,8 +228,8 @@ function checkCriticKey(): CheckResult {
 // Inspect the env for *any* provider key so the missing-key hint can pivot.
 // Returns providers whose API key is present and well-formed enough to be
 // usable. Order is irrelevant — caller filters by use-case.
-function listAvailableProviders(env: NodeJS.ProcessEnv = process.env): Provider[] {
-  const out: Provider[] = [];
+function listAvailableProviders(env: NodeJS.ProcessEnv = process.env): ("anthropic" | "openai" | "gemini")[] {
+  const out: ("anthropic" | "openai" | "gemini")[] = [];
   if ((env.OPENAI_API_KEY ?? "").trim().length >= 8) out.push("openai");
   if ((env.ANTHROPIC_API_KEY ?? "").trim().length >= 8) out.push("anthropic");
   if ((env.GEMINI_API_KEY ?? "").trim().length >= 8) out.push("gemini");
@@ -175,15 +245,21 @@ function listAvailableProviders(env: NodeJS.ProcessEnv = process.env): Provider[
 //        the key, just need to point Shibaki at it). This is the "I have
 //        Gemini but doctor scolds me about OpenAI" fix.
 //   2. Another provider's key IS set, but it would collide with main
-//      (self-critique blind spot) → recommend free Gemini instead.
-//   3. No keys at all → standard "go get one" with Gemini-first nudge.
-export function buildMissingKeyHint(detected: Provider, env: NodeJS.ProcessEnv = process.env): string {
+//      (self-critique blind spot) → recommend free Gemini instead, OR
+//      suggest CLI mode if main provider has a CLI counterpart.
+//   3. No keys at all → offer the Plan mode (CLI critic) route first since
+//      it requires no key, then fall back to Gemini-first API hint.
+export function buildMissingKeyHint(
+  detected: "anthropic" | "openai" | "gemini",
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const main = detectMainProvider(env);
+  const mainFam = providerFamily(main);
   const available = listAvailableProviders(env).filter((p) => p !== detected);
 
   const lines: string[] = [];
-  const usableNow = available.filter((p) => p !== main);
-  const sameAsMain = available.filter((p) => p === main);
+  const usableNow = available.filter((p) => p !== mainFam);
+  const sameAsMain = available.filter((p) => p === mainFam);
 
   if (usableNow.length > 0) {
     const p = usableNow[0]; // pick the first; users with two non-main keys can choose
@@ -203,9 +279,18 @@ export function buildMissingKeyHint(detected: Provider, env: NodeJS.ProcessEnv =
     lines.push(`  export LLM_PROVIDER_CRITICAL=gemini`);
     return lines.join("\n");
   }
-  lines.push(`No provider key found. Easiest path (free):`);
-  lines.push(`  export GEMINI_API_KEY=AIza...   # https://aistudio.google.com/apikey`);
-  lines.push(`  export LLM_PROVIDER_CRITICAL=gemini`);
+  // No keys at all. Plan mode (CLI critic) is the zero-friction path if the
+  // user already has `claude` installed (the most common onboarding shape).
+  lines.push(`No provider key found. Options:`);
+  lines.push(``);
+  lines.push(`A) Plan mode — no API key needed (uses Claude Code plan):`);
+  lines.push(`   export LLM_PROVIDER_CRITICAL=anthropic-cli`);
+  lines.push(`   export LLM_MODEL_CRITICAL=opus`);
+  lines.push(``);
+  lines.push(`B) API mode — Gemini has a free tier:`);
+  lines.push(`   export GEMINI_API_KEY=AIza...   # https://aistudio.google.com/apikey`);
+  lines.push(`   export LLM_PROVIDER_CRITICAL=gemini`);
+  lines.push(``);
   lines.push(`Or get the detected provider's key:`);
   lines.push(`  export ${KEY_NAME[detected]}=...   # ${KEY_HINT_URL[detected]}`);
   return lines.join("\n");
@@ -213,14 +298,24 @@ export function buildMissingKeyHint(detected: Provider, env: NodeJS.ProcessEnv =
 
 // "Did you mean Gemini?" nudge — fires only when the critic key check is
 // PASSING (otherwise the missing-key hint above already covers the same
-// recommendation, and we'd be duplicating the warning).
+// recommendation, and we'd be duplicating the warning). Skipped in CLI mode.
 function checkGeminiHint(): CheckResult {
-  const hasGeminiKey = !!(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length >= 8);
   const criticOverride = process.env.LLM_PROVIDER_CRITICAL;
   const detectedCritic = detectCriticProvider();
-  const criticKeySet = isCriticKeySet();
 
-  if (hasGeminiKey && !criticOverride && criticKeySet && detectedCritic !== "gemini") {
+  // CLI mode: nothing to hint about (no API key in play).
+  if (isCliProvider(detectedCritic)) {
+    return {
+      status: "ok",
+      label: "LLM_PROVIDER_CRITICAL",
+      detail: `(=${criticOverride})`,
+    };
+  }
+
+  const hasGeminiKey = !!(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length >= 8);
+  const criticBackendOk = isCriticBackendOk();
+
+  if (hasGeminiKey && !criticOverride && criticBackendOk && detectedCritic !== "gemini") {
     return {
       status: "warn",
       label: "LLM_PROVIDER_CRITICAL hint",
@@ -235,36 +330,45 @@ function checkGeminiHint(): CheckResult {
   };
 }
 
-// Helper used by both checkProviderSeparation and checkGeminiHint: is the
-// critic provider's API key actually present? When missing, downstream
-// "everything is fine" ✓ checks are misleading because there's no critic
-// to run in the first place.
-function isCriticKeySet(env: NodeJS.ProcessEnv = process.env): boolean {
+// Synchronous best-effort: is the critic "backend" (API key or CLI bin) plausibly
+// present? CLI-provider case here just checks the env override is untouched —
+// real `which` check is async and done in checkCliProvider.
+function isCriticBackendOk(env: NodeJS.ProcessEnv = process.env): boolean {
   const detected = detectCriticProvider(env);
-  const value = env[KEY_NAME[detected]];
+  if (isCliProvider(detected)) return true; // conservative: assume CLI is present
+  const value = env[KEY_NAME[detected as "anthropic" | "openai" | "gemini"]];
   return !!(value && value.trim().length >= 8);
 }
 
 function checkProviderSeparation(): CheckResult {
-  // If the critic has no key, separation is moot — checkCriticKey already
-  // raised an error above. Reporting "✓ Provider separation" here would
-  // give a false sense that the env is half-OK.
-  if (!isCriticKeySet()) {
+  // If the critic has no backend, separation is moot — checkCriticBackend
+  // already raised an error above.
+  if (!isCriticBackendOk()) {
     return {
       status: "warn",
       label: "Provider separation",
-      detail: "(skipped — fix the critic key first)",
+      detail: "(skipped — fix the critic backend first)",
     };
   }
   const main = detectMainProvider();
   const critic = detectCriticProvider();
-  if (main === critic && process.env.SHIBAKI_ALLOW_SAME_PROVIDER !== "1") {
+  const sameFam = providerFamily(main) === providerFamily(critic);
+
+  // CLI critic: same family auto-allowed (UX-first per project decision).
+  if (sameFam && isCliProvider(critic)) {
+    return {
+      status: "ok",
+      label: `Provider separation`,
+      detail: `(main=${main}, critic=${critic}; CLI-mode same-family auto-allowed)`,
+    };
+  }
+  if (sameFam && process.env.SHIBAKI_ALLOW_SAME_PROVIDER !== "1") {
     return {
       status: "error",
       label: `Provider separation`,
-      detail: `(main=${main} == critic=${critic})`,
+      detail: `(main=${main} / critic=${critic} — same family)`,
       hint:
-        `Set LLM_PROVIDER_CRITICAL to a different provider\n` +
+        `Set LLM_PROVIDER_CRITICAL to a different-family provider\n` +
         `(or set SHIBAKI_ALLOW_SAME_PROVIDER=1 to override)`,
     };
   }
@@ -324,15 +428,32 @@ interface ExecResult {
   exitCode: number;
 }
 
-function execCapture(cmd: string, args: string[], cwd?: string): Promise<ExecResult> {
+function execCapture(
+  cmd: string,
+  args: string[],
+  cwd?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        try { child.kill("SIGTERM"); } catch { /* swallow */ }
+      }, timeoutMs);
+    }
     child.stdout.on("data", (d) => (stdout += d.toString()));
     child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("error", () => resolve({ stdout: "", stderr: "", exitCode: 1 }));
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 0 }));
+    child.on("error", () => {
+      if (timer) clearTimeout(timer);
+      resolve({ stdout: "", stderr: "", exitCode: 1 });
+    });
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code ?? 0 });
+    });
   });
 }
 
@@ -344,7 +465,9 @@ Usage:
 Checks:
   - Bun runtime version
   - claude command (PATH)
-  - Critic API key (auto-detect provider + format check)
+  - Critic backend:
+      API mode  → critic API key present + format check
+      Plan mode → critic CLI (claude / gemini / codex) on PATH
   - Main / Critic provider separation (prevents self-critique)
   - Whether current dir is a git repo
   - Whether .env.local is gitignored

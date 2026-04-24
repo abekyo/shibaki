@@ -61,23 +61,26 @@ describe("preflightProviderSeparation", () => {
 });
 
 describe("runAllPreflight — fail-closed 順序", () => {
-  test("key 不在を最初に拒否", () => {
-    const r = runAllPreflight({});
+  // CLI 可用性 check は偽装 (true 固定) し、key / 分離ロジックのみ検証。
+  const alwaysAvail = async (_: string) => true;
+
+  test("key 不在を最初に拒否", async () => {
+    const r = await runAllPreflight({}, alwaysAvail);
     expect(r?.reason).toContain("OPENAI_API_KEY");
   });
 
-  test("key 通過後に provider 分離 chk", () => {
-    const r = runAllPreflight({
+  test("key 通過後に provider 分離 chk", async () => {
+    const r = await runAllPreflight({
       LLM_PROVIDER: "openai",
       LLM_PROVIDER_CRITICAL: "openai",
       OPENAI_API_KEY: "sk-aaaaaaaa",
-    });
+    }, alwaysAvail);
     expect(r?.reason).toContain("self-critique");
   });
 
-  test("両方 pass で null", () => {
-    expect(runAllPreflight({
+  test("両方 pass で null", async () => {
+    expect(await runAllPreflight({
       OPENAI_API_KEY: "sk-aaaaaaaa",
-    })).toBeNull();
+    }, alwaysAvail)).toBeNull();
   });
 });
