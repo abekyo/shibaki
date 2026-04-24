@@ -2,22 +2,32 @@
 // critic は main agent と別プロバイダを強制するのが北極星 (原則2)。
 //
 // env:
-//   LLM_PROVIDER                = anthropic | openai | gemini (default: anthropic)
-//   LLM_PROVIDER_CRITICAL       = critic 専用 provider override (未指定なら openai 固定を推奨)
+//   LLM_PROVIDER                = main agent の宣言 (family 判定用)
+//                                 anthropic | openai | gemini | anthropic-cli | gemini-cli | codex-cli
+//                                 (default: anthropic)
+//   LLM_PROVIDER_CRITICAL       = critic 専用 provider override
 //   LLM_MODEL_CRITICAL          = 明示モデル名
 //   LLM_PROVIDER_LIGHT / LLM_MODEL_LIGHT = 補助用
 //
 // 設計方針: main agent は外部 CLI (claude -p 等) を spawn するため、
 // この router が担当するのは critic + 補助 LLM のみ。
+//
+// CLI provider (anthropic-cli / gemini-cli / codex-cli) は API key 不要で
+// ローカルの `claude` / `gemini` / `codex` を呼ぶ経路。Claude Code plan 等の
+// サブスク契約ユーザーが追加 API 契約なしで critic を動かせる。
 import { anthropicProvider } from "./llm/providers/anthropic.ts";
 import { openaiProvider } from "./llm/providers/openai.ts";
 import { geminiProvider } from "./llm/providers/gemini.ts";
+import { claudeCliProvider } from "./llm/providers/claude-cli.ts";
+import { geminiCliProvider } from "./llm/providers/gemini-cli.ts";
+import { codexCliProvider } from "./llm/providers/codex-cli.ts";
 import {
   LLMFriendlyError,
   type LLMProvider,
   type ProviderName,
   type Tier,
   type CallMeta,
+  isCliProvider,
 } from "./llm/types.ts";
 import { estimateCostUsd } from "./llm/cost.ts";
 
@@ -28,6 +38,8 @@ export const CRITICAL = "CRITICAL" as const;
 export const MAIN = "MAIN" as const;
 export const LIGHT = "LIGHT" as const;
 
+// CLI 系は model 指定が API 系と違う (alias "sonnet"/"opus" や gemini-cli 独自 model 名)。
+// default は "critic は main より強い model を使う" 方針。
 const DEFAULT_MODELS: Record<ProviderName, Record<Tier, string>> = {
   anthropic: {
     CRITICAL: "claude-opus-4-7",
@@ -36,22 +48,37 @@ const DEFAULT_MODELS: Record<ProviderName, Record<Tier, string>> = {
   },
   openai: { CRITICAL: "gpt-4o", MAIN: "gpt-4o", LIGHT: "gpt-4o-mini" },
   gemini: { CRITICAL: "gemini-2.5-pro", MAIN: "gemini-1.5-pro", LIGHT: "gemini-2.0-flash" },
+  "anthropic-cli": { CRITICAL: "opus", MAIN: "sonnet", LIGHT: "haiku" },
+  "gemini-cli": { CRITICAL: "gemini-2.5-pro", MAIN: "gemini-2.5-flash", LIGHT: "gemini-2.5-flash" },
+  "codex-cli": { CRITICAL: "gpt-5", MAIN: "gpt-5", LIGHT: "gpt-5-mini" },
 };
 
 const PROVIDERS: Record<ProviderName, LLMProvider> = {
   anthropic: anthropicProvider,
   openai: openaiProvider,
   gemini: geminiProvider,
+  "anthropic-cli": claudeCliProvider,
+  "gemini-cli": geminiCliProvider,
+  "codex-cli": codexCliProvider,
 };
 
-const VALID_PROVIDERS: ProviderName[] = ["anthropic", "openai", "gemini"];
+const VALID_PROVIDERS: ProviderName[] = [
+  "anthropic", "openai", "gemini",
+  "anthropic-cli", "gemini-cli", "codex-cli",
+];
 
 function activeProviderForTier(tier: Tier): { provider: LLMProvider; model: string } {
   const def = (process.env.LLM_PROVIDER as ProviderName) || "anthropic";
 
-  // CRITICAL tier の default を "openai" に寄せる (別プロバイダ強制のため)。
+  // CRITICAL tier の default を「main と別 family」に寄せる。
+  //  - main=anthropic 系なら critic=openai
+  //  - main=openai 系なら critic=anthropic
+  //  - main=gemini 系なら critic=anthropic
   // 明示 override があればそちらを優先。
-  const criticalDefault: ProviderName = def === "anthropic" ? "openai" : "anthropic";
+  const criticalDefault: ProviderName =
+    def === "anthropic" || def === "anthropic-cli" ? "openai"
+    : def === "openai" || def === "codex-cli" ? "anthropic"
+    : /* gemini 系 */ "anthropic";
 
   const tierEnv =
     tier === "CRITICAL" ? process.env.LLM_PROVIDER_CRITICAL ?? criticalDefault
@@ -140,4 +167,4 @@ export function asArray<T = any>(v: any): T[] {
   return Array.isArray(v) ? v : [];
 }
 
-export { estimateCostUsd };
+export { estimateCostUsd, isCliProvider };

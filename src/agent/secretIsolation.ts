@@ -13,25 +13,44 @@
 // - agent 側 provider の API key (例: agent が claude -p なら ANTHROPIC_API_KEY は維持)
 // - HOME / PATH / SHELL 等の基本 env
 //
+// CLI mode:
+// - critic が anthropic-cli / gemini-cli / codex-cli の場合、critic は API key を持たない
+//   ので strip 対象の key も存在しない。ただし LLM_PROVIDER_CRITICAL / LLM_MODEL_CRITICAL 等の
+//   config 系 env は従来通り strip する (disclosure 回避)。
+//
 // 注意: agent CLI が multi-provider (例: aider) で複数 key を必要とする場合、
 // この strip が agent を壊す可能性がある。その場合 SHIBAKI_ALLOW_AGENT_SECRETS=1 で opt-out。
 
-export type Provider = "anthropic" | "openai" | "gemini";
+import { type ProviderName, type ProviderFamily, providerFamily, isCliProvider } from "../llm/types.ts";
 
-export function detectCriticProvider(env: NodeJS.ProcessEnv = process.env): Provider {
-  const explicit = env.LLM_PROVIDER_CRITICAL?.toLowerCase();
-  if (explicit === "anthropic" || explicit === "openai" || explicit === "gemini") {
-    return explicit;
-  }
-  // default: main の逆 provider (anthropic main → openai critic)
-  const mainProvider = env.LLM_PROVIDER?.toLowerCase() || "anthropic";
-  return mainProvider === "anthropic" ? "openai" : "anthropic";
+// 後方互換: Provider は旧 API 型 (3 値) と CLI 型 (6 値) のユニオン。
+// 新規コードは ProviderName を使う。
+export type Provider = ProviderName;
+
+const VALID: ProviderName[] = [
+  "anthropic", "openai", "gemini",
+  "anthropic-cli", "gemini-cli", "codex-cli",
+];
+
+function parse(v: string | undefined): ProviderName | null {
+  const s = v?.toLowerCase() ?? "";
+  return (VALID as string[]).includes(s) ? (s as ProviderName) : null;
 }
 
-export function detectMainProvider(env: NodeJS.ProcessEnv = process.env): Provider {
-  const v = env.LLM_PROVIDER?.toLowerCase();
-  if (v === "anthropic" || v === "openai" || v === "gemini") return v;
-  return "anthropic";
+export function detectCriticProvider(env: NodeJS.ProcessEnv = process.env): ProviderName {
+  const explicit = parse(env.LLM_PROVIDER_CRITICAL);
+  if (explicit) return explicit;
+  // default: main と別 family になるよう自動選択
+  //  anthropic 系 → openai, openai 系 → anthropic, gemini 系 → anthropic
+  const main = detectMainProvider(env);
+  const fam = providerFamily(main);
+  if (fam === "anthropic") return "openai";
+  if (fam === "openai") return "anthropic";
+  return "anthropic"; // main が gemini 系
+}
+
+export function detectMainProvider(env: NodeJS.ProcessEnv = process.env): ProviderName {
+  return parse(env.LLM_PROVIDER) ?? "anthropic";
 }
 
 /**
@@ -43,17 +62,26 @@ export function buildAgentEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJ
     return { ...parentEnv };
   }
   const env = { ...parentEnv };
-  const criticProvider = detectCriticProvider(parentEnv);
-  const mainProvider = detectMainProvider(parentEnv);
+  const critic = detectCriticProvider(parentEnv);
+  const main = detectMainProvider(parentEnv);
 
-  // critic 側 provider の key を strip (ただし main 側で必要なら残す)
-  const keysByProvider: Record<Provider, string[]> = {
+  // critic 側 family に紐づく API key を strip。
+  // ただし以下のケースでは strip しない:
+  //  1) critic が CLI provider: そもそも critic は API key を使わないので leak する key が無い。
+  //     この場合 ANTHROPIC_API_KEY 等が env にあっても、それは main 側の資産なので残す。
+  //  2) main も critic も API で同 family: 共有 key なので main が必要とする。
+  const keysByFamily: Record<ProviderFamily, string[]> = {
     openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID"],
     anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
     gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   };
-  if (criticProvider !== mainProvider) {
-    for (const k of keysByProvider[criticProvider]) {
+
+  const criticIsApi = !isCliProvider(critic);
+  const bothApiSameFamily =
+    criticIsApi && !isCliProvider(main) && providerFamily(main) === providerFamily(critic);
+
+  if (criticIsApi && !bothApiSameFamily) {
+    for (const k of keysByFamily[providerFamily(critic)]) {
       delete env[k];
     }
   }
