@@ -17,7 +17,7 @@ AI agent (Claude Code / Cursor / Devin / Copilot) が頼んだ範囲を超えて
 別 provider の AI critic がそれを検出する CLI ツール。`--ask` flag を付けると
 scope drift 検出時に human に 30 秒の meta 質問を投げて軌道修正する。
 
-[![asciicast](https://asciinema.org/a/7DGghK2axV9HjvsG.svg)](https://asciinema.org/a/7DGghK2axV9HjvsG)
+[![asciicast](https://asciinema.org/a/xkALquNFdxsEkBdL.svg)](https://asciinema.org/a/xkALquNFdxsEkBdL)
 
 設計思想は [docs/why-shibaki.md](./docs/why-shibaki.md) を参照。
 

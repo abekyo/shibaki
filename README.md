@@ -19,7 +19,7 @@ With `--ask`, Shibaki pauses to ask you a 30-second meta question, then redirect
 
 Read the design philosophy in [docs/why-shibaki.md](./docs/why-shibaki.md).
 
-[![asciicast](https://asciinema.org/a/7DGghK2axV9HjvsG.svg)](https://asciinema.org/a/7DGghK2axV9HjvsG)
+[![asciicast](https://asciinema.org/a/xkALquNFdxsEkBdL.svg)](https://asciinema.org/a/xkALquNFdxsEkBdL)
 
 ---
 
