@@ -4,6 +4,7 @@ import { expect, test, describe } from "bun:test";
 import {
   preflightCriticKey,
   preflightProviderSeparation,
+  preflightCriticCli,
   runAllPreflight,
 } from "../src/cli/preflight.ts";
 import {
@@ -82,22 +83,74 @@ describe("preflightProviderSeparation — CLI critic は同 family でも auto-a
 });
 
 describe("runAllPreflight — CLI mode 最小構成で起動が通る", () => {
-  test("Plan mode: main=claude CLI + critic=claude CLI だけで通る (key 無し)", () => {
+  const alwaysAvail = async (_: string) => true;
+  test("Plan mode: main=claude CLI + critic=claude CLI だけで通る (key 無し)", async () => {
     expect(
-      runAllPreflight({
+      await runAllPreflight({
         LLM_PROVIDER: "anthropic-cli",
         LLM_PROVIDER_CRITICAL: "anthropic-cli",
         LLM_MODEL_CRITICAL: "opus",
-      }),
+      }, alwaysAvail),
     ).toBeNull();
   });
-  test("Plan mode (gemini-cli critic) も key 無しで通る", () => {
+  test("Plan mode (gemini-cli critic) も key 無しで通る", async () => {
     expect(
-      runAllPreflight({
+      await runAllPreflight({
         LLM_PROVIDER: "anthropic-cli",
         LLM_PROVIDER_CRITICAL: "gemini-cli",
-      }),
+      }, alwaysAvail),
     ).toBeNull();
+  });
+});
+
+describe("preflightCriticCli — CLI 可用性 check", () => {
+  test("critic が API provider なら skip (null)", async () => {
+    const neverCalled = async (_: string) => {
+      throw new Error("should not be called");
+    };
+    expect(
+      await preflightCriticCli({ LLM_PROVIDER_CRITICAL: "gemini" }, neverCalled),
+    ).toBeNull();
+  });
+  test("critic=anthropic-cli で claude が PATH に無い → fail", async () => {
+    const r = await preflightCriticCli(
+      { LLM_PROVIDER_CRITICAL: "anthropic-cli" },
+      async (_) => false,
+    );
+    expect(r?.reason).toContain("claude");
+    expect(r?.reason).toContain("not found");
+    expect(r?.hint).toContain("claude-code");
+  });
+  test("critic=codex-cli で codex が PATH に無い → fail", async () => {
+    const r = await preflightCriticCli(
+      { LLM_PROVIDER_CRITICAL: "codex-cli" },
+      async (_) => false,
+    );
+    expect(r?.reason).toContain("codex");
+    expect(r?.hint).toContain("experimental");
+  });
+  test("CLI ある + critic=CLI → null", async () => {
+    expect(
+      await preflightCriticCli(
+        { LLM_PROVIDER_CRITICAL: "anthropic-cli" },
+        async (_) => true,
+      ),
+    ).toBeNull();
+  });
+  test("CLAUDE_CLI_BIN 上書きがあればそちらを check", async () => {
+    const seen: string[] = [];
+    const r = await preflightCriticCli(
+      {
+        LLM_PROVIDER_CRITICAL: "anthropic-cli",
+        CLAUDE_CLI_BIN: "/custom/bin/claude-wrapper",
+      },
+      async (bin) => {
+        seen.push(bin);
+        return false;
+      },
+    );
+    expect(seen).toEqual(["/custom/bin/claude-wrapper"]);
+    expect(r?.reason).toContain("claude-wrapper");
   });
 });
 

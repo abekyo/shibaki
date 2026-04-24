@@ -6,6 +6,7 @@ import {
   type Provider,
 } from "../agent/secretIsolation.ts";
 import { providerFamily, isCliProvider, type ProviderName } from "../llm/types.ts";
+import { cliAvailable } from "../llm/providers/cliShared.ts";
 
 export interface PreflightFailure {
   reason: string;
@@ -25,10 +26,32 @@ const KEY_SOURCE_HINT: Record<"anthropic" | "openai" | "gemini", string> = {
   gemini: "https://aistudio.google.com/apikey (free tier available)",
 };
 
+// CLI provider のバイナリ + 上書き env + install hint を集約。
+const CLI_INFO: Record<
+  "anthropic-cli" | "gemini-cli" | "codex-cli",
+  { defaultBin: string; envVar: string; install: string }
+> = {
+  "anthropic-cli": {
+    defaultBin: "claude",
+    envVar: "CLAUDE_CLI_BIN",
+    install: "npm install -g @anthropic-ai/claude-code && claude login",
+  },
+  "gemini-cli": {
+    defaultBin: "gemini",
+    envVar: "GEMINI_CLI_BIN",
+    install: "npm install -g @google/gemini-cli  (experimental — flags may vary by version)",
+  },
+  "codex-cli": {
+    defaultBin: "codex",
+    envVar: "CODEX_CLI_BIN",
+    install: "npm install -g @openai/codex && codex login  (experimental — flags may vary by version)",
+  },
+};
+
 /** Verify the critic provider's API key is set.
  *  Does not check the agent provider (the agent CLI itself is responsible for that).
  *  CLI-backed critic providers (anthropic-cli / gemini-cli / codex-cli) have no API key —
- *  skip the check entirely; CLI availability is verified by `shibaki doctor`. */
+ *  skip the check entirely; CLI availability is verified by preflightCriticCli. */
 export function preflightCriticKey(env: NodeJS.ProcessEnv = process.env): PreflightFailure | null {
   const criticProvider = detectCriticProvider(env);
   if (isCliProvider(criticProvider)) {
@@ -97,7 +120,37 @@ export function preflightProviderSeparation(
   };
 }
 
+/** If the critic is a CLI-backed provider, verify the bin is actually on PATH.
+ *  Without this, a typo or missing install surfaces as an mid-run ENOENT
+ *  instead of a clear startup error.
+ *
+ *  `check` is injectable for testing — defaults to real `which` via cliShared.
+ */
+export async function preflightCriticCli(
+  env: NodeJS.ProcessEnv = process.env,
+  check: (bin: string) => Promise<boolean> = cliAvailable,
+): Promise<PreflightFailure | null> {
+  const critic = detectCriticProvider(env);
+  if (!isCliProvider(critic)) return null;
+
+  const info = CLI_INFO[critic as keyof typeof CLI_INFO];
+  const bin = (env[info.envVar] ?? "").trim() || info.defaultBin;
+  const ok = await check(bin);
+  if (ok) return null;
+  return {
+    reason: `critic CLI "${bin}" (for provider ${critic}) not found in PATH`,
+    hint: info.install,
+  };
+}
+
 /** Run all pre-flight checks. Return the first failure (fail-closed). */
-export function runAllPreflight(env: NodeJS.ProcessEnv = process.env): PreflightFailure | null {
-  return preflightCriticKey(env) ?? preflightProviderSeparation(env);
+export async function runAllPreflight(
+  env: NodeJS.ProcessEnv = process.env,
+  check: (bin: string) => Promise<boolean> = cliAvailable,
+): Promise<PreflightFailure | null> {
+  return (
+    preflightCriticKey(env) ??
+    preflightProviderSeparation(env) ??
+    (await preflightCriticCli(env, check))
+  );
 }

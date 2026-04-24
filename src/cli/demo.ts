@@ -158,8 +158,16 @@ Usage:
 
 Requirements:
   - Bun installed
-  - claude command available (npm install -g @anthropic-ai/claude-code)
-  - One critic API key exported (OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY)
+  - claude command available and logged in:
+      npm install -g @anthropic-ai/claude-code
+      claude login
+
+Critic backend (auto-picked from your env, in this order):
+  1. If LLM_PROVIDER_CRITICAL is explicitly set → use that.
+  2. Otherwise, if any critic API key is in env (OPENAI / GEMINI / ANTHROPIC)
+     → use that provider (API mode).
+  3. Otherwise → fall back to Plan mode (claude -p as critic, opus).
+     Zero export needed when you already ran 'claude login'.
 
 What it does:
   1. Writes intentional bugs to dogfood/mathTarget.ts
@@ -167,8 +175,10 @@ What it does:
   3. Shibaki fixes the code → verifies completion → prints a one-line "why"
   4. Shows that all tests now pass
 
-Cost: ~$0.02-0.05 (1-3 critic calls)
-Time: ~60 seconds
+Cost:
+  - API mode:  ~\$0.02-0.05 (1-3 critic calls, varies by provider)
+  - Plan mode: counted against your Claude Code plan quota (~2-3 opus calls)
+Time: ~60 seconds on a good day; add ~30s if the critic hits a transient API overload
 `;
 
 function resolveRepoRoot(here: string): string {

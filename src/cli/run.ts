@@ -32,8 +32,8 @@ export async function cmdRun(argv: string[]): Promise<number> {
     process.stderr.write(`${fallback.message}\n`);
   }
 
-  // Pre-flight: API key / provider 分離を起動時に検証 (fail-closed)
-  const preflightFail = runAllPreflight(process.env);
+  // Pre-flight: API key / provider 分離 / CLI 可用性を起動時に検証 (fail-closed)
+  const preflightFail = await runAllPreflight(process.env);
   if (preflightFail) {
     process.stderr.write(`✗ pre-flight check failed: ${preflightFail.reason}\n`);
     process.stderr.write(`  ${preflightFail.hint}\n`);
