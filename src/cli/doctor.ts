@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../agent/secretIsolation.ts";
 import { isCliProvider, providerFamily, type ProviderName } from "../llm/types.ts";
+import { autoSelectCritic } from "./autoFallback.ts";
 
 type CheckStatus = "ok" | "warn" | "error";
 
@@ -30,10 +31,25 @@ export async function cmdDoctor(argv: string[]): Promise<number> {
   process.stdout.write("Shibaki doctor — environment diagnostic\n");
   process.stdout.write("==========================================\n\n");
 
+  // Auto-fallback を先に評価: key 無し + claude あり なら LLM_PROVIDER_CRITICAL を
+  // anthropic-cli に書き換えた上で以降の check を進める。
+  const fallback = await autoSelectCritic(process.env);
+
   const checks: CheckResult[] = [];
 
   checks.push(await checkBun());
   checks.push(await checkClaude());
+  if (fallback.apply) {
+    checks.push({
+      status: "warn",
+      label: "Auto-fallback",
+      detail: "(Plan mode selected)",
+      hint:
+        `${fallback.reason}\n` +
+        `Critic routed to anthropic-cli (model: opus).\n` +
+        `To opt out: export LLM_PROVIDER_CRITICAL=gemini   # or openai / anthropic`,
+    });
+  }
   checks.push(await checkCriticBackend());
   checks.push(checkProviderSeparation());
   checks.push(checkGeminiHint());

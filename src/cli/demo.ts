@@ -8,6 +8,7 @@ import { writeFile } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { autoSelectCritic } from "./autoFallback.ts";
 
 // scripts/demo.ts と同じバグ fixture (本ファイルが正本)
 const BUGGY_CODE = `// Shibaki demo target — このファイルにわざとバグが入っています
@@ -49,19 +50,7 @@ export async function cmdDemo(argv: string[]): Promise<number> {
   const verifyCmd = "bun test dogfood/mathTarget.test.ts";
   const binPath = join(repoRoot, "bin/shibaki.ts");
 
-  // Pre-flight: API key
-  if (!process.env.OPENAI_API_KEY && !process.env.ANTHROPIC_API_KEY && !process.env.GEMINI_API_KEY) {
-    process.stderr.write("\n✗ No critic API key is set.\n\n");
-    process.stderr.write("  Export ONE of the following:\n\n");
-    process.stderr.write("  export GEMINI_API_KEY=AIza...      # free tier: https://aistudio.google.com/apikey\n");
-    process.stderr.write("  export LLM_PROVIDER_CRITICAL=gemini\n\n");
-    process.stderr.write("  or: export OPENAI_API_KEY=sk-...   # https://platform.openai.com/api-keys\n");
-    process.stderr.write("  or: export ANTHROPIC_API_KEY=sk-ant-...\n\n");
-    process.stderr.write("Details: shibaki doctor\n");
-    return 2;
-  }
-
-  // Pre-flight: claude command
+  // Pre-flight: claude command (main agent として必須)
   const claudeAvailable = await commandExists("claude");
   if (!claudeAvailable) {
     process.stderr.write("\n✗ `claude` command not found.\n\n");
@@ -69,6 +58,22 @@ export async function cmdDemo(argv: string[]): Promise<number> {
     process.stderr.write("    npm install -g @anthropic-ai/claude-code\n");
     process.stderr.write("    claude login\n\n");
     process.stderr.write("Details: shibaki doctor\n");
+    return 2;
+  }
+
+  // Zero-setup fallback: API key 一つも無くても claude が入ってれば Plan mode で続行
+  const fallback = await autoSelectCritic(process.env);
+  if (fallback.apply && fallback.message) {
+    process.stderr.write(`\n${fallback.message}\n`);
+  } else if (
+    !process.env.LLM_PROVIDER_CRITICAL &&
+    !process.env.OPENAI_API_KEY &&
+    !process.env.ANTHROPIC_API_KEY &&
+    !process.env.GEMINI_API_KEY
+  ) {
+    // fallback も API key も効かない状況 (claude 無しは上で return 済みなので通常ここには来ない)
+    process.stderr.write("\n✗ No critic backend configured.\n\n");
+    process.stderr.write("  Run: shibaki doctor   for a guided setup hint.\n");
     return 2;
   }
 
