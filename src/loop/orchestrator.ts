@@ -408,17 +408,22 @@ function printCriticVerdict(r: Awaited<ReturnType<typeof runRebuttal>>): void {
     }
   }
 
+  // 表示上限は field 別に設定。shibaki の本質価値 (AI 対話の中身) が 200 文字 cap で
+  // 切れる問題を dogfood で確認したため、各 field の典型長に合わせて緩和:
+  //  - evidence は引用ベースで長文化しやすい → 800
+  //  - counter-example はコード / 具体例で中程度 → 600
+  //  - insight は学び本文、切れると価値激減 → 600
   if (r.counter_example.kind !== "none" && r.counter_example.content) {
-    out.write(`    counter-example (${r.counter_example.kind}): ${truncate(r.counter_example.content, 200)}\n`);
+    out.write(`    counter-example (${r.counter_example.kind}): ${truncate(r.counter_example.content, 600)}\n`);
   }
 
   if (r.evidence) {
     const tag = r.evidence_verified ? "evidence ✓" : "evidence (unverified)";
-    out.write(`    ${tag}: ${truncate(r.evidence, 200)}\n`);
+    out.write(`    ${tag}: ${truncate(r.evidence, 800)}\n`);
   }
 
   if (r.insight.content) {
-    out.write(`    insight (${r.insight.kind}): ${truncate(r.insight.content, 200)}\n`);
+    out.write(`    insight (${r.insight.kind}): ${truncate(r.insight.content, 600)}\n`);
   }
 }
 
