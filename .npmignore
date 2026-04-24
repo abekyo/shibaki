@@ -1,0 +1,13 @@
+.git/
+.github/
+.shibaki/
+.env
+.env.local
+.DS_Store
+node_modules/
+tests/
+scripts/
+*.log
+bun.lock
+.gitignore
+.npmignore

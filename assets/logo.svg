@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 200" width="700" height="200">
+  <!--
+    Shibaki logo — wordmark + slap hand mark (meta-correction for AI)
+  -->
+  <defs>
+    <style>
+      .wordmark {
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-weight: 700;
+        font-size: 96px;
+        fill: #1a1a1a;
+        letter-spacing: -2px;
+      }
+      .tagline {
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-weight: 500;
+        font-size: 18px;
+        fill: #555;
+        letter-spacing: 0.5px;
+      }
+    </style>
+  </defs>
+
+  <!-- slap hand mark (left side, ~160x160 area) -->
+  <g transform="translate(10, 20) scale(0.62)">
+    <!-- impact lines -->
+    <g stroke="#d62828" stroke-width="8" stroke-linecap="round" fill="none">
+      <line x1="22" y1="118" x2="56" y2="128"/>
+      <line x1="22" y1="148" x2="56" y2="148"/>
+      <line x1="22" y1="178" x2="56" y2="168"/>
+    </g>
+    <!-- hand in dark ink -->
+    <g fill="#1a1a1a">
+      <rect x="84" y="118" width="100" height="84" rx="20"/>
+      <rect x="92"  y="38"  width="20" height="92" rx="10"/>
+      <rect x="118" y="22"  width="20" height="108" rx="10"/>
+      <rect x="144" y="32"  width="20" height="98" rx="10"/>
+      <rect x="170" y="50"  width="20" height="80" rx="10"/>
+      <path d="M 184 138
+               Q 220 130 226 162
+               Q 226 188 198 192
+               L 184 192 Z"/>
+    </g>
+  </g>
+
+  <!-- wordmark -->
+  <text x="200" y="125" class="wordmark">shibaki</text>
+
+  <!-- tagline -->
+  <text x="200" y="165" class="tagline">slap your AI agent when it drifts off-task</text>
+</svg>
