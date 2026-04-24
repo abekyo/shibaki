@@ -67,30 +67,46 @@ export const claudeCliProvider: LLMProvider = {
 
 /** claude -p --output-format json の stdout から本文テキストを取り出す。
  *  想定形: {"type":"result","result":"...","is_error":false,...}
- *  予防線として JSON parse 失敗時は raw を返す (ユーザーの --output-format 上書き等)。 */
-function extractResultText(stdout: string): string {
+ *
+ *  is_error === true のときは例外を throw。caller (callText / callJson) 側が
+ *  withRetry 経由なので、overloaded 等の message が message に入ってれば retry される。
+ *
+ *  JSON 不成立時は raw を返す (ユーザーが --output-format を差し替えた等)。
+ *
+ *  試験用に export している (tests/claudeCli.test.ts からの import)。 */
+export function extractResultText(stdout: string): string {
   const trimmed = stdout.trim();
   if (!trimmed) return "";
+
+  let obj: any;
   try {
-    const obj = JSON.parse(trimmed);
-    if (obj && typeof obj === "object") {
-      if (obj.is_error) {
-        throw new Error(`claude CLI reported error: ${obj.result ?? obj.subtype ?? "unknown"}`);
-      }
-      if (typeof obj.result === "string") return obj.result;
-      // stream-json を間違って混ぜられた場合の緩衝: 最後の assistant text を拾う
-      if (Array.isArray(obj)) {
-        const texts = obj
-          .filter((e: any) => e?.type === "assistant" || e?.type === "result")
-          .map((e: any) => e.result ?? e.text ?? "")
-          .filter(Boolean);
-        if (texts.length) return texts.join("");
-      }
-    }
-    return trimmed;
+    obj = JSON.parse(trimmed);
   } catch {
+    // not JSON — caller の --output-format 差し替えと見なして raw をそのまま渡す
     return trimmed;
   }
+
+  if (!obj || typeof obj !== "object") return trimmed;
+
+  // Array (stream-json) ケース — Object.typeof も "object" を返すのでここで先に拾う
+  if (Array.isArray(obj)) {
+    const texts = obj
+      .filter((e: any) => e?.type === "assistant" || e?.type === "result")
+      .map((e: any) => e.result ?? e.text ?? "")
+      .filter(Boolean);
+    if (texts.length) return texts.join("");
+    return trimmed;
+  }
+
+  if (obj.is_error) {
+    // 注意: この throw は try/catch で囲まれていないので caller に正しく伝播する
+    const detail = obj.result ?? obj.subtype ?? "unknown";
+    throw new Error(`claude CLI reported error: ${detail}`);
+  }
+
+  if (typeof obj.result === "string") return obj.result;
+
+  return trimmed;
 }
 
 function truncate(s: string, n: number): string {

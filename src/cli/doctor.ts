@@ -179,10 +179,26 @@ async function checkCliProvider(
       hint: info.install,
     };
   }
+  // Smoke: --version を 5 秒 timeout で叩いて、bin が実際に起動可能か確認。
+  // これで「npm install は成功してるが node バージョン問題で exec 失敗」
+  // みたいな壊れた install を早期検知できる。login 状態までは検証しない
+  // (それは run 時に初めて分かる — API 呼ぶまで login は assert しない)。
+  const smoke = await execCapture(bin, ["--version"], undefined, 5000);
+  if (smoke.exitCode !== 0) {
+    return {
+      status: "warn",
+      label: `Critic CLI (${provider})`,
+      detail: `(found at ${which.stdout.trim()}, but '${bin} --version' failed)`,
+      hint:
+        `exit ${smoke.exitCode}. Try re-installing:\n${info.install}\n` +
+        `(or wrap in a shell script and set ${info.envVar}=/path/to/wrapper)`,
+    };
+  }
+  const versionLine = smoke.stdout.trim().split(/\r?\n/)[0]?.slice(0, 40) ?? "";
   return {
     status: "ok",
     label: `Critic CLI (${provider})`,
-    detail: `(${which.stdout.trim()})`,
+    detail: `(${which.stdout.trim()}${versionLine ? `, v: ${versionLine}` : ""})`,
   };
 }
 
@@ -433,15 +449,32 @@ interface ExecResult {
   exitCode: number;
 }
 
-function execCapture(cmd: string, args: string[], cwd?: string): Promise<ExecResult> {
+function execCapture(
+  cmd: string,
+  args: string[],
+  cwd?: string,
+  timeoutMs?: number,
+): Promise<ExecResult> {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (timeoutMs !== undefined) {
+      timer = setTimeout(() => {
+        try { child.kill("SIGTERM"); } catch { /* swallow */ }
+      }, timeoutMs);
+    }
     child.stdout.on("data", (d) => (stdout += d.toString()));
     child.stderr.on("data", (d) => (stderr += d.toString()));
-    child.on("error", () => resolve({ stdout: "", stderr: "", exitCode: 1 }));
-    child.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 0 }));
+    child.on("error", () => {
+      if (timer) clearTimeout(timer);
+      resolve({ stdout: "", stderr: "", exitCode: 1 });
+    });
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ stdout, stderr, exitCode: code ?? 0 });
+    });
   });
 }
 

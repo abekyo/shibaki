@@ -105,13 +105,16 @@ export async function cmdDemo(argv: string[]): Promise<number> {
     repoRoot,
   );
 
-  // 再テストは「ユーザー視認用 (with tail)」と「exit code 取得用 (silent)」の 2 本立て。
-  // pipe で tail を挟むと exit code が tail 側 (常に 0) になって拾えないため、分けて実行する。
+  // 再テストは視認 (with tail) と exit 取得を 1 回にまとめる。
+  // 普通の pipe だと exit code が tail 側 (常に 0) になるので `set -o pipefail` で
+  // 先頭 (bun test) の非 0 exit を pipeline exit に昇格させる。
   // graceful degradation の判定材料に使う: shibaki 本体が途中で倒れていても、agent が bug を
   // 直し終わってれば tests は green になっているケースがある。その場合「本質ゴール達成」を明示する。
   process.stdout.write("\n4. Re-running tests (after fix):\n");
-  await runShell(`bun test dogfood/mathTarget.test.ts 2>&1 | tail -3`, repoRoot);
-  const testExit = await runShellSilent(`bun test dogfood/mathTarget.test.ts`, repoRoot);
+  const testExit = await runShell(
+    `set -o pipefail; bun test dogfood/mathTarget.test.ts 2>&1 | tail -3`,
+    repoRoot,
+  );
 
   process.stdout.write("\n==========================================\n");
   if (shibakiExit === 0 && testExit === 0) {
@@ -195,15 +198,6 @@ function runShell(cmd: string, cwd: string): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn("sh", ["-c", cmd], { cwd, stdio: "inherit" });
     child.on("close", (code) => resolve(code ?? 0));
-  });
-}
-
-/** runShell の silent 版。exit code だけ欲しい時用 (verify 的再確認など)。 */
-function runShellSilent(cmd: string, cwd: string): Promise<number> {
-  return new Promise((resolve) => {
-    const child = spawn("sh", ["-c", cmd], { cwd, stdio: "ignore" });
-    child.on("close", (code) => resolve(code ?? 0));
-    child.on("error", () => resolve(1));
   });
 }
 
