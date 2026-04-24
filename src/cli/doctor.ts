@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../agent/secretIsolation.ts";
 import { isCliProvider, providerFamily, type ProviderName } from "../llm/types.ts";
+import { CLI_INFO } from "../llm/providers/cliShared.ts";
 import { autoSelectCritic } from "./autoFallback.ts";
 
 type CheckStatus = "ok" | "warn" | "error";
@@ -132,28 +133,6 @@ const KEY_HINT_URL: Record<"anthropic" | "openai" | "gemini", string> = {
   gemini: "https://aistudio.google.com/apikey (free tier available, recommended)",
 };
 
-// CLI-backed provider を PATH 上の bin 名にマップする (上書き用 env 名付き)。
-// キーは ProviderName の CLI variant、値は (bin, install-hint) ペア。
-const CLI_INFO: Record<
-  "anthropic-cli" | "gemini-cli" | "codex-cli",
-  { bin: string; envVar: string; install: string }
-> = {
-  "anthropic-cli": {
-    bin: "claude",
-    envVar: "CLAUDE_CLI_BIN",
-    install: "npm install -g @anthropic-ai/claude-code && claude login",
-  },
-  "gemini-cli": {
-    bin: "gemini",
-    envVar: "GEMINI_CLI_BIN",
-    install: "npm install -g @google/gemini-cli",
-  },
-  "codex-cli": {
-    bin: "codex",
-    envVar: "CODEX_CLI_BIN",
-    install: "npm install -g @openai/codex && codex login",
-  },
-};
 
 /** CLI provider は API key の代わりに bin が PATH 上にあるかを確認。
  *  API provider は従来通り key check。 */
@@ -169,7 +148,7 @@ async function checkCliProvider(
   provider: "anthropic-cli" | "gemini-cli" | "codex-cli",
 ): Promise<CheckResult> {
   const info = CLI_INFO[provider];
-  const bin = process.env[info.envVar]?.trim() || info.bin;
+  const bin = process.env[info.envVar]?.trim() || info.defaultBin;
   const which = await execCapture("which", [bin]);
   if (which.exitCode !== 0) {
     return {

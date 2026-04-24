@@ -6,7 +6,7 @@ import {
   type Provider,
 } from "../agent/secretIsolation.ts";
 import { providerFamily, isCliProvider, type ProviderName } from "../llm/types.ts";
-import { cliAvailable } from "../llm/providers/cliShared.ts";
+import { cliAvailable, CLI_INFO } from "../llm/providers/cliShared.ts";
 
 export interface PreflightFailure {
   reason: string;
@@ -26,27 +26,6 @@ const KEY_SOURCE_HINT: Record<"anthropic" | "openai" | "gemini", string> = {
   gemini: "https://aistudio.google.com/apikey (free tier available)",
 };
 
-// CLI provider のバイナリ + 上書き env + install hint を集約。
-const CLI_INFO: Record<
-  "anthropic-cli" | "gemini-cli" | "codex-cli",
-  { defaultBin: string; envVar: string; install: string }
-> = {
-  "anthropic-cli": {
-    defaultBin: "claude",
-    envVar: "CLAUDE_CLI_BIN",
-    install: "npm install -g @anthropic-ai/claude-code && claude login",
-  },
-  "gemini-cli": {
-    defaultBin: "gemini",
-    envVar: "GEMINI_CLI_BIN",
-    install: "npm install -g @google/gemini-cli  (experimental — flags may vary by version)",
-  },
-  "codex-cli": {
-    defaultBin: "codex",
-    envVar: "CODEX_CLI_BIN",
-    install: "npm install -g @openai/codex && codex login  (experimental — flags may vary by version)",
-  },
-};
 
 /** Verify the critic provider's API key is set.
  *  Does not check the agent provider (the agent CLI itself is responsible for that).

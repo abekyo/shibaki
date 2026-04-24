@@ -117,6 +117,29 @@ export function composeCliPrompt(system: string, user: string, jsonMode: boolean
   return parts.join("\n\n");
 }
 
+// CLI provider のバイナリ + 上書き env + install hint を集約。
+// キーは ProviderName の CLI variant、値は (defaultBin, envVar, install) トリプル。
+export const CLI_INFO: Record<
+  "anthropic-cli" | "gemini-cli" | "codex-cli",
+  { defaultBin: string; envVar: string; install: string }
+> = {
+  "anthropic-cli": {
+    defaultBin: "claude",
+    envVar: "CLAUDE_CLI_BIN",
+    install: "npm install -g @anthropic-ai/claude-code && claude login",
+  },
+  "gemini-cli": {
+    defaultBin: "gemini",
+    envVar: "GEMINI_CLI_BIN",
+    install: "npm install -g @google/gemini-cli  (experimental — flags may vary by version)",
+  },
+  "codex-cli": {
+    defaultBin: "codex",
+    envVar: "CODEX_CLI_BIN",
+    install: "npm install -g @openai/codex && codex login  (experimental — flags may vary by version)",
+  },
+};
+
 /** CLI which-check 用。未インストール時 testApiKey で親切なエラーを出すのに使う。 */
 export async function cliAvailable(bin: string): Promise<boolean> {
   return new Promise((resolve) => {
