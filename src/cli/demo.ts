@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { autoSelectCritic } from "./autoFallback.ts";
+import { detectCriticProvider } from "../agent/secretIsolation.ts";
 
 // Same bug fixture as scripts/demo.ts (this file is the source of truth).
 // Note: intentionally do NOT include comments that point to the bug location. The agent must
@@ -92,9 +93,15 @@ export async function cmdDemo(argv: string[]): Promise<number> {
   // so without this, output bypasses tail -3 and explodes.
   await runShell(`bun test dogfood/mathTarget.test.ts 2>&1 | tail -3`, repoRoot);
 
-  process.stdout.write("\n3. Letting Shibaki fix it (fully automatic, no --ask):\n");
+  // Print the actually-resolved critic instead of a hard-coded "default OpenAI" line.
+  // After autoSelectCritic ran above, process.env.LLM_PROVIDER_CRITICAL reflects the
+  // real choice (user's explicit setting / API key family default / Plan-mode fallback).
+  // Hard-coding "default OpenAI" was misleading whenever the auto-fallback selected
+  // anthropic-cli (the most common path).
+  const resolvedCritic = detectCriticProvider(process.env);
+  process.stdout.write("\n3. Letting Shibaki fix it (fully automatic, no --ask-human):\n");
   process.stdout.write("   - main agent: claude -p\n");
-  process.stdout.write("   - critic:     a different provider (env-configured / default OpenAI)\n\n");
+  process.stdout.write(`   - critic:     ${resolvedCritic}\n\n`);
 
   const shibakiExit = await runShell(
     [
