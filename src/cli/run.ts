@@ -4,8 +4,17 @@ import { parseRunArgs, ArgError } from "./args.ts";
 import { runLoop } from "../loop/orchestrator.ts";
 import { runAllPreflight } from "./preflight.ts";
 import { autoSelectCritic } from "./autoFallback.ts";
+import { HELP_TEXT } from "./help.ts";
 
 export async function cmdRun(argv: string[]): Promise<number> {
+  // -h / --help は parseRunArgs より前に intercept する。
+  // 普遍的な CLI 慣習 (gh / docker / git) — subcommand --help はそのコマンドの
+  // help を出すべきで、"unknown option" を返してはならない。
+  if (argv.includes("-h") || argv.includes("--help")) {
+    process.stdout.write(HELP_TEXT);
+    return 0;
+  }
+
   let args;
   try {
     args = parseRunArgs(argv);
