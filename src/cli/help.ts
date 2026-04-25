@@ -1,3 +1,31 @@
+// Help text は 2 段構成:
+//  - SHORT_HELP_TEXT: `shibaki --help` の default。reference 用途、~20 行。
+//  - HELP_TEXT (LONG): `shibaki --help-long` と `shibaki run --help` の中身。
+//                     Before/After の物語 + run の全 option / env / scope 説明。
+//
+// 設計意図: 軽い reference は短く、深い学習は明示要求 (`--help-long`) 経由。
+
+export const SHORT_HELP_TEXT = `Shibaki — Slap your AI agent when it drifts off-task.
+
+Subcommands:
+  run            Run a critic loop on an AI agent (main feature)
+  demo           60-second built-in demo (intentional bug fix)
+  doctor         Read-only environment diagnostic
+  audit-publish  Leak sweep before public push / npm publish
+
+Try first:
+  shibaki doctor    # check environment
+  shibaki demo      # see it work
+
+Usage:
+  shibaki run --agent <cmd> --verify <cmd> "<task>"
+       [--max-tries N] [--timeout SEC] [--ask-human] [--debug] [--dry-run]
+
+For more:
+  shibaki run --help     # run-specific reference (options, env vars, scope)
+  shibaki --help-long    # full reference + design philosophy
+`;
+
 export const HELP_TEXT = `Shibaki — Slap your AI agent when it drifts off-task.
 
 Subcommands:
@@ -24,8 +52,8 @@ After (with Shibaki):
   00:08 usable artifact returns  (only the 30s of input was captive)
 
 Options:
-  --agent <cmd>      Working agent (e.g. "claude -p")
-  --verify <cmd>     Completion check command. Must exit 0.
+  --agent <cmd>      (required) Working agent (e.g. "claude -p")
+  --verify <cmd>     (required) Completion check command. Must exit 0.
   --max-tries <n>    Max retry count (default 10)
   --timeout <sec>    Total task timeout in seconds (default 1800)
   --dry-run          Acceptance check only, do not execute
@@ -34,9 +62,10 @@ Options:
                      The file contains your task text, agent stdout/stderr,
                      verify stdout/stderr, the working diff, and any human
                      meta answers — scrub it before sharing publicly.
-  --ask              On scope drift, ask the human a 1-line meta question
+  --ask-human        On scope drift, ask the human a 1-line meta question
                      and inject the answer into the next try (Shibaki's
-                     core experience; off = fully automatic)
+                     core experience; off = fully automatic).
+                     (alias: --ask  — kept for backward compat)
 
 Environment:
   ANTHROPIC_API_KEY           For main agent (claude -p)

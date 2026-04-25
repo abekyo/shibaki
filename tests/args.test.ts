@@ -46,6 +46,16 @@ describe("parseRunArgs", () => {
     const a = parseRunArgs(["--agent", "x", "--verify", "y", "--dry-run", "task"]);
     expect(a.dryRun).toBe(true);
   });
+
+  test("--ask-human flag (canonical 名)", () => {
+    const a = parseRunArgs(["--agent", "x", "--verify", "y", "--ask-human", "task"]);
+    expect(a.ask).toBe(true);
+  });
+
+  test("--ask は --ask-human の alias (後方互換)", () => {
+    const a = parseRunArgs(["--agent", "x", "--verify", "y", "--ask", "task"]);
+    expect(a.ask).toBe(true);
+  });
 });
 
 describe("parseRunArgs — 必須 args の missing は 1 回で報告 (round-trip 削減)", () => {

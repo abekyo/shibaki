@@ -60,6 +60,9 @@ export function parseRunArgs(argv: string[]): RunArgs {
       case "--debug":
         debug = true;
         break;
+      // --ask-human が canonical 名 (「誰に / 何を ask するか」を明示)。
+      // --ask は 0.1 系の旧名で alias として維持 (後方互換 — 既存のシェルスクリプトを壊さない)。
+      case "--ask-human":
       case "--ask":
         ask = true;
         break;
@@ -101,7 +104,7 @@ export function parseRunArgs(argv: string[]): RunArgs {
 
 const KNOWN_FLAGS = [
   "--agent", "--verify", "--max-tries", "--timeout",
-  "--dry-run", "--debug", "--ask",
+  "--dry-run", "--debug", "--ask-human", "--ask",
 ];
 
 /** Suggest the closest known flag for a typo (Levenshtein distance ≤ 2).

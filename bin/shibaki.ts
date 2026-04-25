@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { HELP_TEXT } from "../src/cli/help.ts";
+import { HELP_TEXT, SHORT_HELP_TEXT } from "../src/cli/help.ts";
 import { cmdRun } from "../src/cli/run.ts";
 import { cmdAuditPublish } from "../src/cli/audit.ts";
 import { cmdDemo } from "../src/cli/demo.ts";
@@ -18,7 +18,14 @@ async function main(): Promise<number> {
     return code;
   }
 
+  // help は 2 段構成: default は SHORT (~20 行 reference)、--help-long で物語版。
+  // `shibaki run --help` 等の subcommand 側は run-detailed の HELP_TEXT を出す
+  // (subcommand 内 handler が担当)。
   if (sub === "-h" || sub === "--help" || sub === "help") {
+    process.stdout.write(SHORT_HELP_TEXT);
+    return 0;
+  }
+  if (sub === "--help-long" || sub === "help-long") {
     process.stdout.write(HELP_TEXT);
     return 0;
   }
@@ -32,12 +39,15 @@ async function main(): Promise<number> {
       return await cmdDoctor(rest);
     case "audit-publish":
       return await cmdAuditPublish(rest);
+    // version は --version / -v / version subcommand のいずれでも受ける
+    // (gh / docker / cargo の慣習に合わせる)
+    case "version":
     case "--version":
     case "-v":
       process.stdout.write("shibaki 0.1.0\n");
       return 0;
     default: {
-      const known = ["run", "demo", "doctor", "audit-publish"];
+      const known = ["run", "demo", "doctor", "audit-publish", "version"];
       const close = known.find((k) => levenshtein(sub, k) <= 2);
       process.stderr.write(`unknown subcommand: ${sub}\n`);
       if (close) {
