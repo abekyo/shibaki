@@ -1,4 +1,4 @@
-// CLI 引数 parser (最小)。受理判定のルールは scope.md に従う。
+// CLI argument parser (minimal). Acceptance rules follow scope.md.
 
 export interface RunArgs {
   agent: string;
@@ -8,7 +8,8 @@ export interface RunArgs {
   timeoutSec: number;
   dryRun: boolean;
   debug: boolean;
-  ask: boolean;   // critic が scope drift を検出したら human に 1 行 meta question を問う
+  ask: boolean;   // when critic detects scope drift, ask the human a 1-line meta question
+  quiet: boolean; // suppress non-essential output (spinner / per-try critic dialog) — for CI / scripting
 }
 
 export class ArgError extends Error {
@@ -25,6 +26,7 @@ export function parseRunArgs(argv: string[]): RunArgs {
   let dryRun = false;
   let debug = false;
   let ask = false;
+  let quiet = false;
   const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -60,11 +62,15 @@ export function parseRunArgs(argv: string[]): RunArgs {
       case "--debug":
         debug = true;
         break;
-      // --ask-human が canonical 名 (「誰に / 何を ask するか」を明示)。
-      // --ask は 0.1 系の旧名で alias として維持 (後方互換 — 既存のシェルスクリプトを壊さない)。
+      // --ask-human is the canonical name (makes "who/what is being asked" explicit).
+      // --ask is the legacy name from the 0.1 series, kept as an alias (backward compatibility — don't break existing shell scripts).
       case "--ask-human":
       case "--ask":
         ask = true;
+        break;
+      case "--quiet":
+      case "-q":
+        quiet = true;
         break;
       default:
         if (a.startsWith("--")) {
@@ -76,10 +82,10 @@ export function parseRunArgs(argv: string[]): RunArgs {
     }
   }
 
-  // 必須引数の不足は1個ずつ throw せず、まとめて報告する。
-  // 旧挙動: "--agent is required" → 修正 → "--verify is required" → 修正 → "task is empty"
-  //         (3 回往復しないと完成形が分からない)
-  // 新挙動: 不足してる引数全部 + 完全な example を 1 回で出す。
+  // Don't throw on missing required arguments one-by-one; report them all at once.
+  // Old behavior: "--agent is required" → fix → "--verify is required" → fix → "task is empty"
+  //               (3 round-trips before you know the full form)
+  // New behavior: list every missing argument + a complete example in a single shot.
   const task = positional.join(" ").trim();
   const missing: string[] = [];
   if (!agent) missing.push("--agent <cmd>          (e.g. \"claude -p\")");
@@ -97,14 +103,14 @@ export function parseRunArgs(argv: string[]): RunArgs {
     throw new ArgError(lines.join("\n"));
   }
 
-  // 上の missing.length > 0 で throw 済みなので、ここでは agent/verify が非 undefined。
-  // TypeScript narrow は missing array 経由を追えないので明示する。
-  return { agent: agent!, verify: verify!, task, maxTries, timeoutSec, dryRun, debug, ask };
+  // Already threw above when missing.length > 0, so agent/verify are non-undefined here.
+  // TypeScript's narrowing can't follow the missing-array path, so assert explicitly.
+  return { agent: agent!, verify: verify!, task, maxTries, timeoutSec, dryRun, debug, ask, quiet };
 }
 
 const KNOWN_FLAGS = [
   "--agent", "--verify", "--max-tries", "--timeout",
-  "--dry-run", "--debug", "--ask-human", "--ask",
+  "--dry-run", "--debug", "--ask-human", "--ask", "--quiet",
 ];
 
 /** Suggest the closest known flag for a typo (Levenshtein distance ≤ 2).

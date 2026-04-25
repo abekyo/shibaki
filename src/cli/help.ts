@@ -1,9 +1,9 @@
-// Help text は 2 段構成:
-//  - SHORT_HELP_TEXT: `shibaki --help` の default。reference 用途、~20 行。
-//  - HELP_TEXT (LONG): `shibaki --help-long` と `shibaki run --help` の中身。
-//                     Before/After の物語 + run の全 option / env / scope 説明。
+// Help text is two-tiered:
+//  - SHORT_HELP_TEXT: default for `shibaki --help`. Reference use, ~20 lines.
+//  - HELP_TEXT (LONG): contents of `shibaki --help-long` and `shibaki run --help`.
+//                     Before/After narrative + run's full option / env / scope explanation.
 //
-// 設計意図: 軽い reference は短く、深い学習は明示要求 (`--help-long`) 経由。
+// Design intent: keep the light reference short; deeper learning goes through an explicit request (`--help-long`).
 
 export const SHORT_HELP_TEXT = `Shibaki — Slap your AI agent when it drifts off-task.
 
@@ -19,7 +19,7 @@ Try first:
 
 Usage:
   shibaki run --agent <cmd> --verify <cmd> "<task>"
-       [--max-tries N] [--timeout SEC] [--ask-human] [--debug] [--dry-run]
+       [--max-tries N] [--timeout SEC] [--ask-human] [--debug] [--dry-run] [--quiet]
 
 For more:
   shibaki run --help     # run-specific reference (options, env vars, scope)
@@ -66,6 +66,10 @@ Options:
                      and inject the answer into the next try (Shibaki's
                      core experience; off = fully automatic).
                      (alias: --ask  — kept for backward compat)
+  --quiet, -q        CI / scripting mode. Suppress per-try progress markers,
+                     spinner, critic dialog, and the auto-fallback notice.
+                     Final summary line, preflight failures, retry warnings,
+                     and human meta prompts (--ask-human) are still printed.
 
 Environment:
   ANTHROPIC_API_KEY           For main agent (claude -p)

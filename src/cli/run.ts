@@ -1,5 +1,5 @@
-// `shibaki run` エントリ。args を parse → orchestrator に渡す。
-// critic ログを絶対にユーザーに出さない (原則1)。
+// `shibaki run` entry. Parse args → hand off to orchestrator.
+// Never expose critic logs to the user (principle 1).
 import { parseRunArgs, ArgError } from "./args.ts";
 import { runLoop } from "../loop/orchestrator.ts";
 import { runAllPreflight } from "./preflight.ts";
@@ -7,9 +7,9 @@ import { autoSelectCritic } from "./autoFallback.ts";
 import { HELP_TEXT } from "./help.ts";
 
 export async function cmdRun(argv: string[]): Promise<number> {
-  // -h / --help は parseRunArgs より前に intercept する。
-  // 普遍的な CLI 慣習 (gh / docker / git) — subcommand --help はそのコマンドの
-  // help を出すべきで、"unknown option" を返してはならない。
+  // Intercept -h / --help before parseRunArgs.
+  // Universal CLI convention (gh / docker / git) — subcommand --help should
+  // print that command's help, not return "unknown option".
   if (argv.includes("-h") || argv.includes("--help")) {
     process.stdout.write(HELP_TEXT);
     return 0;
@@ -34,14 +34,16 @@ export async function cmdRun(argv: string[]): Promise<number> {
     return 0;
   }
 
-  // Zero-setup fallback: 何も export してないユーザーの critic を Plan mode に自動切替。
-  // 発動時は stderr に 1 行出して透明性を担保。明示指定 / API key あり / claude 無しのどれかで no-op。
+  // Zero-setup fallback: auto-switch the critic to Plan mode for users who haven't exported anything.
+  // When it fires, print one line to stderr for transparency.
+  // --quiet (CI / scripting) suppresses the message — fallback still applies, just silently.
+  // No-op if explicitly set / API key present / claude missing.
   const fallback = await autoSelectCritic(process.env);
-  if (fallback.apply && fallback.message) {
+  if (fallback.apply && fallback.message && !args.quiet) {
     process.stderr.write(`${fallback.message}\n`);
   }
 
-  // Pre-flight: API key / provider 分離 / CLI 可用性を起動時に検証 (fail-closed)
+  // Pre-flight: verify API key / provider separation / CLI availability at startup (fail-closed)
   const preflightFail = await runAllPreflight(process.env);
   if (preflightFail) {
     process.stderr.write(`✗ pre-flight check failed: ${preflightFail.reason}\n`);

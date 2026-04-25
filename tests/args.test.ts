@@ -2,7 +2,7 @@ import { expect, test, describe } from "bun:test";
 import { parseRunArgs, ArgError } from "../src/cli/args.ts";
 
 describe("parseRunArgs", () => {
-  test("必須 --agent / --verify / task が揃えば成功", () => {
+  test("succeeds when required --agent / --verify / task are all present", () => {
     const a = parseRunArgs(["--agent", "claude -p", "--verify", "bun test", "task body"]);
     expect(a.agent).toBe("claude -p");
     expect(a.verify).toBe("bun test");
@@ -11,19 +11,19 @@ describe("parseRunArgs", () => {
     expect(a.timeoutSec).toBe(1800);
   });
 
-  test("--verify 未指定は ArgError (受理拒否)", () => {
+  test("missing --verify → ArgError (rejected)", () => {
     expect(() => parseRunArgs(["--agent", "claude -p", "task"])).toThrow(ArgError);
   });
 
-  test("--agent 未指定は ArgError", () => {
+  test("missing --agent → ArgError", () => {
     expect(() => parseRunArgs(["--verify", "bun test", "task"])).toThrow(ArgError);
   });
 
-  test("タスク本文が空は ArgError", () => {
+  test("empty task body → ArgError", () => {
     expect(() => parseRunArgs(["--agent", "x", "--verify", "y"])).toThrow(ArgError);
   });
 
-  test("--max-tries / --timeout の上書き", () => {
+  test("--max-tries / --timeout overrides", () => {
     const a = parseRunArgs([
       "--agent", "x", "--verify", "y",
       "--max-tries", "5", "--timeout", "60",
@@ -33,12 +33,12 @@ describe("parseRunArgs", () => {
     expect(a.timeoutSec).toBe(60);
   });
 
-  test("--max-tries は 50 でクランプ", () => {
+  test("--max-tries clamps at 50", () => {
     const a = parseRunArgs(["--agent", "x", "--verify", "y", "--max-tries", "999", "task"]);
     expect(a.maxTries).toBe(50);
   });
 
-  test("未知オプションは ArgError", () => {
+  test("unknown option → ArgError", () => {
     expect(() => parseRunArgs(["--foo", "bar", "task"])).toThrow(ArgError);
   });
 
@@ -47,21 +47,36 @@ describe("parseRunArgs", () => {
     expect(a.dryRun).toBe(true);
   });
 
-  test("--ask-human flag (canonical 名)", () => {
+  test("--ask-human flag (canonical name)", () => {
     const a = parseRunArgs(["--agent", "x", "--verify", "y", "--ask-human", "task"]);
     expect(a.ask).toBe(true);
   });
 
-  test("--ask は --ask-human の alias (後方互換)", () => {
+  test("--ask is an alias for --ask-human (backward compatibility)", () => {
     const a = parseRunArgs(["--agent", "x", "--verify", "y", "--ask", "task"]);
     expect(a.ask).toBe(true);
   });
+
+  test("--quiet flag (long form)", () => {
+    const a = parseRunArgs(["--agent", "x", "--verify", "y", "--quiet", "task"]);
+    expect(a.quiet).toBe(true);
+  });
+
+  test("-q is an alias for --quiet (short form)", () => {
+    const a = parseRunArgs(["--agent", "x", "--verify", "y", "-q", "task"]);
+    expect(a.quiet).toBe(true);
+  });
+
+  test("default: quiet is false", () => {
+    const a = parseRunArgs(["--agent", "x", "--verify", "y", "task"]);
+    expect(a.quiet).toBe(false);
+  });
 });
 
-describe("parseRunArgs — 必須 args の missing は 1 回で報告 (round-trip 削減)", () => {
-  // 旧挙動だと --agent → --verify → task と 3 回 throw して、ユーザーが
-  // 3 回 invocation を直す必要があった。新挙動は 1 回ですべて報告。
-  test("引数ゼロ: --agent / --verify / task が全部 1 message に列挙される", () => {
+describe("parseRunArgs — report all missing required args at once (reduce round-trips)", () => {
+  // Old behavior threw 3 times for --agent → --verify → task, forcing the user
+  // to fix invocation 3 times. New behavior reports all in one go.
+  test("zero args: --agent / --verify / task all listed in one message", () => {
     let msg = "";
     try { parseRunArgs([]); } catch (e: any) { msg = e.message; }
     expect(msg).toContain("--agent");
@@ -70,15 +85,15 @@ describe("parseRunArgs — 必須 args の missing は 1 回で報告 (round-tri
     expect(msg).toContain("example");
   });
 
-  test("--agent だけ指定: 残り 2 つを報告", () => {
+  test("only --agent provided: reports the other two", () => {
     let msg = "";
     try { parseRunArgs(["--agent", "claude -p"]); } catch (e: any) { msg = e.message; }
-    expect(msg).not.toContain("• --agent"); // 既に提供済み
+    expect(msg).not.toContain("• --agent"); // already provided
     expect(msg).toContain("• --verify");
     expect(msg).toContain("• <task>");
   });
 
-  test("--agent + --verify あり、task 無し: task のみ報告", () => {
+  test("--agent + --verify present, no task: reports only task", () => {
     let msg = "";
     try { parseRunArgs(["--agent", "x", "--verify", "y"]); } catch (e: any) { msg = e.message; }
     expect(msg).not.toContain("• --agent");

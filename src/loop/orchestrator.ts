@@ -40,10 +40,15 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
   const debugLog: DebugLogger = args.debug
     ? await openDebugLog(process.cwd())
     : NULL_LOGGER;
-  if (args.debug) {
-    progress(`▶ task accepted (verify: ${args.verify}) [debug: ${debugLog.path}]`);
-  } else {
-    progress(`▶ task accepted (verify: ${args.verify})`);
+  // --quiet (CI / scripting): suppress per-try progress markers, spinner, and
+  // critic dialog. The final ✓/✗ summary, preflight failures, retry warnings,
+  // and human meta-question prompts (--ask-human) are always shown.
+  if (!args.quiet) {
+    if (args.debug) {
+      progress(`▶ task accepted (verify: ${args.verify}) [debug: ${debugLog.path}]`);
+    } else {
+      progress(`▶ task accepted (verify: ${args.verify})`);
+    }
   }
   await debugLog.write("start", { task: args.task, verify: args.verify, agent: args.agent, cfg });
 
@@ -81,10 +86,12 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
     }
 
     budget.tries += 1;
-    progress(`▶ try ${budget.tries}/${cfg.maxTries}`);
+    if (!args.quiet) progress(`▶ try ${budget.tries}/${cfg.maxTries}`);
 
-    // 1. run the main agent
-    const agentTick = phaseTicker("agent working", { expectedRange: "20-60s" });
+    // 1. run the main agent — spinner suppressed in quiet mode (NULL_TICKER no-ops both start/stop)
+    const agentTick = args.quiet
+      ? NULL_TICKER
+      : phaseTicker("agent working", { expectedRange: "20-60s" });
     const agent = await runMainAgent({
       agentCmd: args.agent,
       task: args.task,
@@ -105,8 +112,10 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
       maxBytesPerFile: 20_000,
     });
 
-    // 4. rebuttal (critic)
-    const criticTick = phaseTicker("critic deliberating", { expectedRange: "30-90s" });
+    // 4. rebuttal (critic) — spinner suppressed in quiet mode
+    const criticTick = args.quiet
+      ? NULL_TICKER
+      : phaseTicker("critic deliberating", { expectedRange: "30-90s" });
     let criticDebug: { system: string; user: string; raw: any } | null = null;
     const rebuttal = await runRebuttal(
       {
@@ -144,7 +153,8 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
     // Show the critic's verdict to the user. Principle 1 (= hide introspection) has been retracted:
     // the critic is the core value, but if it's invisible the user can't judge "was it useful",
     // so the run looks like a black box that just costs more.
-    printCriticVerdict(rebuttal);
+    // --quiet suppresses the per-try dialog (CI / scripting) — the final summary line still fires.
+    if (!args.quiet) printCriticVerdict(rebuttal);
 
     if (rebuttal.preempt_hint.pattern_name && rebuttal.preempt_hint.pattern_name !== "unknown") {
       lastPreemptHint = rebuttal.preempt_hint.pattern_name;
@@ -453,6 +463,10 @@ function truncate(s: string, n: number): string {
 
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const SPINNER_INTERVAL_MS = 80;
+
+// No-op ticker used when --quiet suppresses spinner output. Same shape as phaseTicker's
+// return so call sites don't have to special-case.
+const NULL_TICKER = { stop: () => {} } as const;
 
 function phaseTicker(
   label: string,
