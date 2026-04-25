@@ -47,3 +47,32 @@ describe("parseRunArgs", () => {
     expect(a.dryRun).toBe(true);
   });
 });
+
+describe("parseRunArgs — 必須 args の missing は 1 回で報告 (round-trip 削減)", () => {
+  // 旧挙動だと --agent → --verify → task と 3 回 throw して、ユーザーが
+  // 3 回 invocation を直す必要があった。新挙動は 1 回ですべて報告。
+  test("引数ゼロ: --agent / --verify / task が全部 1 message に列挙される", () => {
+    let msg = "";
+    try { parseRunArgs([]); } catch (e: any) { msg = e.message; }
+    expect(msg).toContain("--agent");
+    expect(msg).toContain("--verify");
+    expect(msg).toContain("<task>");
+    expect(msg).toContain("example");
+  });
+
+  test("--agent だけ指定: 残り 2 つを報告", () => {
+    let msg = "";
+    try { parseRunArgs(["--agent", "claude -p"]); } catch (e: any) { msg = e.message; }
+    expect(msg).not.toContain("• --agent"); // 既に提供済み
+    expect(msg).toContain("• --verify");
+    expect(msg).toContain("• <task>");
+  });
+
+  test("--agent + --verify あり、task 無し: task のみ報告", () => {
+    let msg = "";
+    try { parseRunArgs(["--agent", "x", "--verify", "y"]); } catch (e: any) { msg = e.message; }
+    expect(msg).not.toContain("• --agent");
+    expect(msg).not.toContain("• --verify");
+    expect(msg).toContain("• <task>");
+  });
+});

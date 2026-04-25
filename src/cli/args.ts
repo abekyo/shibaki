@@ -73,24 +73,30 @@ export function parseRunArgs(argv: string[]): RunArgs {
     }
   }
 
-  if (!agent) {
-    throw new ArgError(
-      "--agent is required",
-      "example: --agent \"claude -p\"",
-    );
-  }
-  if (!verify) {
-    throw new ArgError(
-      "--verify is required (tasks with no completion criterion are not accepted)",
-      "use plain claude -p directly. details: docs/scope.md",
-    );
-  }
+  // 必須引数の不足は1個ずつ throw せず、まとめて報告する。
+  // 旧挙動: "--agent is required" → 修正 → "--verify is required" → 修正 → "task is empty"
+  //         (3 回往復しないと完成形が分からない)
+  // 新挙動: 不足してる引数全部 + 完全な example を 1 回で出す。
   const task = positional.join(" ").trim();
-  if (!task) {
-    throw new ArgError("task body is empty");
+  const missing: string[] = [];
+  if (!agent) missing.push("--agent <cmd>          (e.g. \"claude -p\")");
+  if (!verify) missing.push("--verify <cmd>         (e.g. \"bun test tests/\") — required, no exception");
+  if (!task) missing.push("<task> (positional)    (e.g. \"fix the failing test in tests/auth.test.ts\")");
+
+  if (missing.length > 0) {
+    const lines: string[] = ["missing required argument(s):"];
+    for (const m of missing) lines.push(`  • ${m}`);
+    lines.push("");
+    lines.push("example (complete invocation):");
+    lines.push(`  shibaki run --agent "claude -p" --verify "bun test tests/auth.test.ts" "fix the failing test"`);
+    lines.push("");
+    lines.push("for the full reference: shibaki run --help");
+    throw new ArgError(lines.join("\n"));
   }
 
-  return { agent, verify, task, maxTries, timeoutSec, dryRun, debug, ask };
+  // 上の missing.length > 0 で throw 済みなので、ここでは agent/verify が非 undefined。
+  // TypeScript narrow は missing array 経由を追えないので明示する。
+  return { agent: agent!, verify: verify!, task, maxTries, timeoutSec, dryRun, debug, ask };
 }
 
 const KNOWN_FLAGS = [
