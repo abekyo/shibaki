@@ -130,9 +130,12 @@ curl -fsSL https://bun.sh/install | bash
 bunx shibaki-cli@latest demo
 ```
 
-demo は fixture に意図的なバグを書き込んで Claude に直させ、テストを回し直す
-ところまで自動。Shibaki が PATH 上の `claude` を自動検出して opus tier を
-critic に割り当てる — env 設定も API key も要らない。
+demo は小さな fixture に対して Claude を走らせ、AI 同士の対話をリアルタイム
+で表示する：各試行ごとに `✓ critic approves` か `✗ critic slaps` が出て、
+verdict / attack angles / evidence / 1 行 insight を見せる — 実タスクで
+critic loop が出力する内容そのもの。Shibaki が PATH 上の `claude` を
+自動検出して opus tier を critic に割り当てる — env 設定も API key も
+要らない。
 
 > **クロスプロバイダ原則についての注意。** Plan mode では agent と critic が
 > 両方 Claude（sonnet と opus の tier 違い）— **同 provider・別モデル**。

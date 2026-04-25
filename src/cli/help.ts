@@ -9,7 +9,7 @@ export const SHORT_HELP_TEXT = `Shibaki — Slap your AI agent when it drifts of
 
 Subcommands:
   run            Run a critic loop on an AI agent (main feature)
-  demo           60-second built-in demo (intentional bug fix)
+  demo           60-second built-in demo (real critic loop on a fixture)
   doctor         Read-only environment diagnostic
   audit-publish  Leak sweep before public push / npm publish
 
@@ -30,7 +30,7 @@ export const HELP_TEXT = `Shibaki — Slap your AI agent when it drifts off-task
 
 Subcommands:
   shibaki run            Run a critic loop on an AI agent (main feature)
-  shibaki demo           60-second built-in demo (intentional bug fix)
+  shibaki demo           60-second built-in demo (real critic loop on a fixture)
   shibaki doctor         Read-only environment diagnostic (run this first if it doesn't work)
   shibaki audit-publish  Leak sweep before public push / npm publish
 

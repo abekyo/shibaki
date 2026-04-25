@@ -134,9 +134,12 @@ curl -fsSL https://bun.sh/install | bash
 bunx shibaki-cli@latest demo
 ```
 
-The demo writes intentional bugs into a fixture, lets Claude fix them, and
-re-runs the tests. Shibaki auto-detects `claude` on PATH and routes the critic
-to the opus tier — no env vars, no API key.
+The demo runs Claude against a small fixture and shows the AI-vs-AI dialog
+in real time: each try prints a `✓ critic approves` or `✗ critic slaps`
+line with the verdict, attack angles, evidence, and a one-line insight —
+exactly what the critic loop does on a real task. Shibaki auto-detects
+`claude` on PATH and routes the critic to the opus tier — no env vars, no
+API key.
 
 > **Note on the cross-provider rule.** In Plan mode, the agent and the critic
 > are both Claude (sonnet vs opus tiers) — same provider, different model. This
