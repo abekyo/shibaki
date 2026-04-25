@@ -29,7 +29,7 @@ Options:
   --max-tries <n>    Max retry count (default 10)
   --timeout <sec>    Total task timeout in seconds (default 1800)
   --dry-run          Acceptance check only, do not execute
-  --debug            Write critic loop full log to .shibaki/run-<ts>.jsonl
+  --debug            Write critic loop full log to ~/.shibaki/logs/<project>-<ts>.jsonl
                      (not for normal use, for debugging false negatives).
                      The file contains your task text, agent stdout/stderr,
                      verify stdout/stderr, the working diff, and any human
