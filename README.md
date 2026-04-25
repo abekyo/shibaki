@@ -13,9 +13,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [日本語 README](./README.ja.md)
 
-When an AI coding agent (Claude Code / Cursor / Devin / Copilot) goes beyond what
-you actually asked, Shibaki — using a different-provider AI critic — catches the drift.
-With `--ask`, Shibaki pauses to ask you a 30-second meta question, then redirects the agent.
+Ask an AI agent: "fix one failing test."
+What you get: the test fixed, **plus** a refactor, **plus** new defensive code,
+**plus** a new helper class, **plus** JSDoc on everything.
+The tests pass. The code reviews. **But it's not what you asked for.**
+
+This is **process addiction** — the agent loses sight of the original goal because
+it's optimizing for "better code" rather than "what the user said."
+Existing tools (linters, test runners, code review bots) don't catch this because
+the code IS technically better.
+
+Shibaki adds a **goal alignment** axis to AI critic loops, using a
+different-provider AI critic. With `--ask-human`, it pauses on drift to ask
+you a 30-second meta question, then redirects the agent.
 
 Read the design philosophy in [docs/why-shibaki.md](./docs/why-shibaki.md).
 
@@ -23,78 +33,170 @@ Read the design philosophy in [docs/why-shibaki.md](./docs/why-shibaki.md).
 
 ---
 
-## Get started
+## How it works
 
-Shibaki runs on [Bun](https://bun.sh). Install if you don't have it:
+You hand Shibaki a task and a shell command that means "exit 0 = done". Two AIs
+then bounce the work between each other — a worker agent edits code, a critic
+agent (different provider) checks for cheating and scope drift — until either
+the verify command goes green or the budget runs out. With `--ask-human`, drift
+detections pause for a 30-second human meta-question that's injected back into
+the next try.
 
-```bash
-curl -fsSL https://bun.sh/install | bash
+```
+        ┌──────────────────────────────────────────────┐
+        │  You provide:                                │
+        │   • the task   (e.g. "fix a failing test")   │
+        │   • a "done" check (e.g. bun test)           │
+        │     — must exit 0                            │
+        └─────────────────────┬────────────────────────┘
+                              │
+   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━┷━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+   ┃   Loop  (max N tries; default 10)                        ┃
+   ┃                                                          ┃
+   ┃     ┌────────────────┐                                   ┃
+   ┃     │ Worker agent   │ ◄── critic's last feedback        ┃
+   ┃     │ edits the code │     (+ 1-line human note if any)  ┃
+   ┃     └────────┬───────┘                                   ┃
+   ┃              │ changes                                   ┃
+   ┃              ▼                                           ┃
+   ┃     ┌────────────────────┐                               ┃
+   ┃     │ run verify command │                               ┃
+   ┃     │ → exit 0?          │                               ┃
+   ┃     └────────┬───────────┘                               ┃
+   ┃              │                                           ┃
+   ┃              ▼                                           ┃
+   ┃     ┌────────────────────────┐                           ┃
+   ┃     │ Critic agent judges    │                           ┃
+   ┃     │ "did it really do it?" │                           ┃
+   ┃     └─┬─────────┬───────┬───┘                            ┃
+   ┃       │approve  │reject │drift detected                  ┃
+   ┃       │         │       │ + --ask-human is ON            ┃
+   ┃       │         │       ▼                                ┃
+   ┃       │         │  ┌──────────────────────────┐          ┃
+   ┃       │         │  │ ask the human, 1 line    │          ┃
+   ┃       │         │  │ (30s; continue on        │          ┃
+   ┃       │         │  │  no answer)              │          ┃
+   ┃       │         │  └────────────┬─────────────┘          ┃
+   ┃       │         │               │                        ┃
+   ┃       │         └───────────────┤ feedback               ┃
+   ┃       │                         │ (+ human note)         ┃
+   ┃       │                         │  → next try            ┃
+   ┃       │                         │                        ┃
+   ┗━━━━━━━│═════════════════════════│════════════════════════┛
+           ▼                         ▼
+        ✓ done                  ✗ fail (N tries exhausted)
 ```
 
-Check your environment — Shibaki with no arguments runs a read-only diagnostic that
-lists what's set up (Bun, Claude Code, an API key) and what isn't:
+- **approve** = verify exits 0 *and* the critic finds no cheats / drift.
+- **reject** = the critic spots cheating (test skipped, type errors silenced,
+  test files edited to make verify green, etc.) — feedback goes to the worker
+  for the next try.
+- **drift detected** = the worker did *more* than asked. Without `--ask-human`,
+  Shibaki just notes it. With `--ask-human`, you get one 30-second prompt to
+  redirect.
+
+---
+
+## Scope
+
+### Accepted tasks
+- Fix a failing test (`--verify "bun test ..."`)
+- Eliminate type errors (`--verify "tsc --noEmit"`)
+- Fix lint violations (`--verify "eslint ..."`)
+- Make a build pass (`--verify "bun run build"`)
+- Any script that you want to exit 0
+
+### Rejected tasks (`--verify` is required)
+- Vague requests like "clean up this code"
+- Refactors (behavior preservation is hard to guarantee)
+- UI text / naming and other subjective tasks
+
+> **See it work in 25s**: [bench/verify-bypass/](./bench/verify-bypass/) — a
+> reproducible demo of the critic catching a test-deletion bypass that
+> exit-code-only loops would miss.
+
+See [docs/scope.md](./docs/scope.md) for the full acceptance/rejection boundary.
+
+---
+
+## Get started
+
+Three steps. **No API key.**
+
+```bash
+# 1. Claude Code (skip if already logged in)
+npm install -g @anthropic-ai/claude-code && claude login
+
+# 2. Bun (skip if already installed)
+curl -fsSL https://bun.sh/install | bash
+
+# 3. Run the demo
+bunx shibaki@latest demo
+```
+
+The demo writes intentional bugs into a fixture, lets Claude fix them, and
+re-runs the tests. Shibaki auto-detects `claude` on PATH and routes the critic
+to the opus tier — no env vars, no API key.
+
+> **Note on the cross-provider rule.** In Plan mode, the agent and the critic
+> are both Claude (sonnet vs opus tiers) — same provider, different model. This
+> is a relaxation of Shibaki's strict cross-provider rule. For full
+> cross-provider enforcement (recommended for serious use / CI), use **API
+> mode** below.
+
+<details>
+<summary>Diagnostic, explicit pinning, API mode (cross-provider), global install</summary>
+
+### Diagnostic
+
+`shibaki` with no arguments runs a read-only check listing what's detected
+(Bun, Claude Code, API keys) and what's missing:
 
 ```bash
 bunx shibaki@latest
 ```
 
-If the diagnostic flagged anything, fill in the gaps. Shibaki supports two run modes — and **picks one for you automatically** if you haven't set `LLM_PROVIDER_CRITICAL`:
+### Plan mode — explicit pinning (CI / reproducibility)
 
-> **Zero-setup path (most common)** — if `claude` is on your PATH (via `claude login`) and no critic API key is in your env, Shibaki auto-selects Plan mode with the opus tier critic. You don't need to export anything; the selection is announced on stderr when it fires. This is what the demo relies on.
-
-**Plan mode** — no API key. Uses your Claude Code plan (or Gemini Code Assist / Codex plan):
+The auto-detection above is convenient but non-deterministic in CI. Pin explicitly:
 
 ```bash
-# Install + login to the agent CLI
-npm install -g @anthropic-ai/claude-code
-claude login
-
-# That's it — Shibaki will auto-select anthropic-cli as critic.
-# To pin explicitly (recommended for CI / reproducibility):
 export LLM_PROVIDER=anthropic-cli
 export LLM_PROVIDER_CRITICAL=anthropic-cli
 export LLM_MODEL_CRITICAL=opus
 ```
 
-**API mode** — different-provider API key for the critic (classic setup):
+### API mode — different-provider critic (full cross-provider)
+
+Agent stays as Claude; critic moves to a different provider. This is the
+**structural cross-provider** mode that Shibaki was designed around.
 
 ```bash
-# Agent CLI
-npm install -g @anthropic-ai/claude-code
-claude login
-
 # Critic API key — different provider than the agent.
 # Gemini has a free tier: https://aistudio.google.com/apikey
 export GEMINI_API_KEY=AIza...
 export LLM_PROVIDER_CRITICAL=gemini
 ```
 
-Then run the built-in demo — Shibaki writes intentional bugs into a fixture, lets
-Claude fix them, and re-runs the tests:
+Other supported critic providers: OpenAI (`OPENAI_API_KEY`), Anthropic API
+(`ANTHROPIC_API_KEY`).
+
+### Global install (optional)
+
+Install once so you can call `shibaki` directly without the `bunx` prefix:
 
 ```bash
-bunx shibaki@latest demo
+bun add -g shibaki
+# or, from a cloned repo:
+cd shibaki && bun link
 ```
 
-Why does Shibaki route the critic to a different provider (or a different model, in
-Plan mode)? To avoid self-critique blind spots where a model defends its own output.
-See [SECURITY.md](./SECURITY.md) for overrides.
+### Why a different provider for the critic?
 
----
+To avoid self-critique blind spots where a model defends its own output. See
+[SECURITY.md](./SECURITY.md) for overrides like `SHIBAKI_ALLOW_SAME_PROVIDER`.
 
-## What is "process addiction"?
-
-Ask an AI agent: "fix one failing test."
-What you get: the test fixed, **plus** a refactor, **plus** new defensive code,
-**plus** a new helper class, **plus** JSDoc on everything.
-The tests pass. The code reviews. **But it's not what you asked for.**
-
-This is **process addiction** — the agent loses sight of the original goal because it's
-optimizing for "better code" rather than "what the user said."
-Existing tools (linters, test runners, code review bots) don't catch this because
-the code IS technically better.
-
-Shibaki adds a **goal alignment** axis to AI critic loops.
+</details>
 
 ---
 
@@ -111,19 +213,8 @@ shibaki run \
 shibaki run \
   --agent "claude -p" \
   --verify "bun test tests/auth.test.ts" \
-  --ask \
+  --ask-human \
   "fix the failing test in tests/auth.test.ts"
-```
-
-To make `shibaki` available globally:
-
-```bash
-# Option A: bun link (from the cloned repo)
-cd shibaki && bun link
-shibaki --help
-
-# Option B: install from npm
-bun add -g shibaki
 ```
 
 ---
@@ -134,11 +225,11 @@ bun add -g shibaki
 |---|---|
 | `--agent <cmd>` | Working agent. e.g. `"claude -p"` / `"aider --message-file -"` |
 | `--verify <cmd>` | Completion check command. **Must exit 0.** e.g. `"bun test"` / `"tsc --noEmit"` |
-| `--ask` | Ask the human a 30-second meta question on scope drift |
+| `--ask-human` | Ask the human a 30-second meta question on scope drift (alias: `--ask`) |
 | `--max-tries <n>` | Max retry count (default 10) |
 | `--timeout <sec>` | Total task timeout (default 1800) |
 | `--dry-run` | Acceptance check only, do not execute |
-| `--debug` | Write critic loop log to `.shibaki/run-<ts>.jsonl` |
+| `--debug` | Write critic loop log to `~/.shibaki/logs/<project>-<ts>.jsonl` |
 
 ---
 
@@ -194,24 +285,6 @@ the blind spot). Bin name can be overridden via `CLAUDE_CLI_BIN` / `GEMINI_CLI_B
 
 In API mode, same-family main/critic is rejected at startup
 (set `SHIBAKI_ALLOW_SAME_PROVIDER=1` to opt out).
-
----
-
-## Scope
-
-### Accepted tasks
-- Fix a failing test (`--verify "bun test ..."`)
-- Eliminate type errors (`--verify "tsc --noEmit"`)
-- Fix lint violations (`--verify "eslint ..."`)
-- Make a build pass (`--verify "bun run build"`)
-- Any script that you want to exit 0
-
-### Rejected tasks (`--verify` is required)
-- Vague requests like "clean up this code"
-- Refactors (behavior preservation is hard to guarantee)
-- UI text / naming and other subjective tasks
-
-See [docs/scope.md](./docs/scope.md).
 
 ---
 

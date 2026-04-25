@@ -1,52 +1,52 @@
-// Zero-setup auto-fallback: ユーザーが `claude login` 済みで API key を一切
-// export していないとき、critic を自動で anthropic-cli (opus) に切り替える。
+// Zero-setup auto-fallback: when the user has run `claude login` and has not
+// exported any API key, automatically switch the critic to anthropic-cli (opus).
 //
-// 狙い: 「bunx shibaki demo で何も export せずに動く」体験。
-// UX 優先設計。ただし以下 2 点で透明性を担保する:
-//   1) fallback が起きた瞬間 stderr に 1 行 print (サイレント default 変更は避ける)
-//   2) LLM_PROVIDER_CRITICAL を明示 export してるユーザーには一切触らない
+// Aim: the "bunx shibaki demo works without exporting anything" experience.
+// UX-first design, but transparency is preserved by two rules:
+//   1) Print one line to stderr the moment fallback fires (avoid silent default changes)
+//   2) Don't touch users who have explicitly exported LLM_PROVIDER_CRITICAL
 //
-// 本モジュールは decideFallback (pure) と autoSelectCritic (async wrapper) に
-// 分離する。判断ロジックは env + claudeAvailable: boolean だけで決まるので、
-// テストは pure 関数側で完結する。
+// This module is split into decideFallback (pure) and autoSelectCritic (async wrapper).
+// The decision logic depends only on env + claudeAvailable: boolean, so tests
+// can be self-contained on the pure-function side.
 import { cliAvailable } from "../llm/providers/cliShared.ts";
 
 export interface FallbackDecision {
   apply: boolean;
   provider?: "anthropic-cli";
   reason?: string;
-  /** ユーザー向け 1 行説明 (stderr に出す) */
+  /** One-line user-facing explanation (printed to stderr) */
   message?: string;
 }
 
-/** 判断ロジック (pure)。env を mutate しない。
+/** Decision logic (pure). Does not mutate env.
  *
- *  fallback を打つ条件:
- *    - LLM_PROVIDER_CRITICAL が未設定 (ユーザーが明示選択してない)
- *    - 既定 critic provider の API key が env に無い (= そのままなら preflight で落ちる)
- *    - claude CLI が PATH 上にある
+ *  Conditions to fire fallback:
+ *    - LLM_PROVIDER_CRITICAL is unset (user didn't explicitly choose)
+ *    - Default critic provider's API key is not in env (= preflight would otherwise fail)
+ *    - claude CLI is on PATH
  *
- *  上記すべてを満たすときだけ apply = true。
+ *  Only when all of the above hold is apply = true.
  */
 export function decideFallback(
   env: NodeJS.ProcessEnv,
   claudeAvailable: boolean,
 ): FallbackDecision {
-  // ユーザーが LLM_PROVIDER_CRITICAL を明示してる場合は何もしない
+  // Do nothing if the user has explicitly set LLM_PROVIDER_CRITICAL
   if (env.LLM_PROVIDER_CRITICAL && env.LLM_PROVIDER_CRITICAL.trim()) {
     return { apply: false };
   }
-  // claude が無いなら fallback 先がない
+  // No fallback target if claude is missing
   if (!claudeAvailable) return { apply: false };
 
-  // 既定 critic の API key が env にあるなら API mode で動けるので触らない。
-  // ここは detectCriticProvider と同じ logic: main=anthropic 系なら openai、
-  // main=openai 系なら anthropic、main=gemini 系なら anthropic が default critic。
+  // If the default critic's API key is in env, it can run in API mode — don't touch it.
+  // Same logic as detectCriticProvider: main=anthropic family → openai,
+  // main=openai family → anthropic, main=gemini family → anthropic as default critic.
   const main = (env.LLM_PROVIDER ?? "").toLowerCase();
   const defaultCritic =
     main === "anthropic" || main === "anthropic-cli" || main === "" ? "openai"
     : main === "openai" || main === "codex-cli" ? "anthropic"
-    : /* gemini 系 */ "anthropic";
+    : /* gemini family */ "anthropic";
 
   const keyName =
     defaultCritic === "openai" ? "OPENAI_API_KEY"
@@ -56,7 +56,7 @@ export function decideFallback(
   const keyPresent = (env[keyName] ?? "").trim().length >= 8;
   if (keyPresent) return { apply: false };
 
-  // fallback 発動
+  // Fire fallback
   return {
     apply: true,
     provider: "anthropic-cli",
@@ -69,13 +69,13 @@ export function decideFallback(
   };
 }
 
-/** Async wrapper: `which claude` で確認 → apply なら env を mutate。
+/** Async wrapper: confirm via `which claude` → mutate env if apply.
  *
- *  caller は返値の message を自分で stderr に出してよい (サイレントには print しない)。 */
+ *  The caller may print the returned message to stderr themselves (don't print silently). */
 export async function autoSelectCritic(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<FallbackDecision> {
-  // 事前早期 return: ユーザー明示指定があれば PATH も見ない
+  // Early return: if the user has explicitly set it, don't even check PATH
   if (env.LLM_PROVIDER_CRITICAL && env.LLM_PROVIDER_CRITICAL.trim()) {
     return { apply: false };
   }
@@ -83,8 +83,8 @@ export async function autoSelectCritic(
   const decision = decideFallback(env, claudeAvailable);
   if (decision.apply && decision.provider) {
     env.LLM_PROVIDER_CRITICAL = decision.provider;
-    // LLM_MODEL_CRITICAL は router default (anthropic-cli → opus) に任せる。
-    // 既に user 設定があるなら尊重 (いじらない)。
+    // Leave LLM_MODEL_CRITICAL to the router default (anthropic-cli → opus).
+    // Respect any existing user setting (don't touch it).
   }
   return decision;
 }

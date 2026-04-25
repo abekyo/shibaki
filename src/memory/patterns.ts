@@ -1,9 +1,9 @@
-// 失敗モード / 成功パターン辞書 (Hermes 式 markdown + § 区切り永続化)
+// Failure-mode / success-pattern dictionary (Hermes-style markdown with § separators, persisted).
 //
-// セッション (= 1 Shibaki run) 開始時に丸ごと load → critic system prompt に
-// frozen snapshot として注入。session 中に新規 pattern を観測しても再注入はしない
-// (frozen snapshot 維持 + Anthropic prompt cache 整合)。
-// session 終了時にまとめてファイルへ書き戻す。
+// At session start (= one Shibaki run), load the whole file → inject into the critic system
+// prompt as a frozen snapshot. New patterns observed mid-session are not re-injected
+// (preserves the frozen snapshot + keeps the Anthropic prompt cache consistent).
+// At session end, batch-write everything back to the file.
 import { mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -12,14 +12,14 @@ export type PatternType = "failure" | "success";
 export interface Pattern {
   type: PatternType;
   pattern_name: string;     // snake_case
-  description: string;      // 1 行
-  hits: number;             // 観測回数
+  description: string;      // one line
+  hits: number;             // observation count
   last_seen: string;        // ISO date (yyyy-mm-dd)
 }
 
 const SEPARATOR = "\n§\n";
 
-/** patterns.md をパースして Pattern[] を返す。ファイルが無ければ空配列。 */
+/** Parse patterns.md and return Pattern[]. Returns an empty array if the file is missing. */
 export async function loadPatterns(path: string): Promise<Pattern[]> {
   let raw: string;
   try {
@@ -55,11 +55,11 @@ function parseBlock(block: string): Pattern | null {
   };
 }
 
-/** patterns.md に書き戻す。Hermes 式 § 区切り。 */
+/** Write back to patterns.md. Hermes-style § separators. */
 export async function savePatterns(path: string, patterns: Pattern[]): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const blocks = patterns.map(formatBlock);
-  // 先頭にも区切りを置いておくと append しやすい
+  // Placing a separator at the head makes appends easier
   const body = blocks.length > 0 ? SEPARATOR.trimStart() + blocks.join(SEPARATOR) + "\n" : "";
   await writeFile(path, body);
 }
@@ -74,7 +74,7 @@ function formatBlock(p: Pattern): string {
   ].join("\n");
 }
 
-/** 既存 patterns に新規観測を merge。同じ (type, pattern_name) なら hits++ + last_seen 更新。 */
+/** Merge a new observation into existing patterns. Same (type, pattern_name) → hits++ and update last_seen. */
 export function mergeObservation(
   patterns: Pattern[],
   observation: { type: PatternType; pattern_name: string; description: string },
@@ -90,7 +90,7 @@ export function mergeObservation(
       ...next[idx],
       hits: next[idx].hits + 1,
       last_seen: today,
-      // description は新規の方が具体的なら採用 (空でなく長い方)
+      // Adopt the new description if it's more specific (non-empty and longer)
       description:
         observation.description && observation.description.length > next[idx].description.length
           ? observation.description
@@ -110,9 +110,9 @@ export function mergeObservation(
   ];
 }
 
-/** 文字数上限で古いものを prune (Hermes は 2200 字、Shibaki は 4000 字を仮置き)。 */
+/** Prune older entries against a character cap (Hermes uses 2200; Shibaki tentatively uses 4000). */
 export function prunePatterns(patterns: Pattern[], maxChars: number = 4000): Pattern[] {
-  // hits 多い順、同点なら last_seen 新しい順で残す
+  // Keep by hits desc; on ties, by last_seen desc
   const sorted = [...patterns].sort((a, b) => {
     if (b.hits !== a.hits) return b.hits - a.hits;
     return b.last_seen.localeCompare(a.last_seen);
@@ -128,12 +128,12 @@ export function prunePatterns(patterns: Pattern[], maxChars: number = 4000): Pat
   return kept;
 }
 
-/** patterns.md のデフォルト保存先。CWD/.shibaki/patterns.md */
+/** Default save location for patterns.md. CWD/.shibaki/patterns.md */
 export function defaultPatternsPath(cwd: string = process.cwd()): string {
   return join(cwd, ".shibaki", "patterns.md");
 }
 
-/** 既存ファイル存在確認 (debug 用)。 */
+/** Check whether the existing file exists (for debug). */
 export async function patternsFileExists(path: string): Promise<boolean> {
   try {
     const s = await stat(path);

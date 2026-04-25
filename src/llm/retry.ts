@@ -1,26 +1,26 @@
-// 一時的エラーの自動 retry ラッパ。
+// Auto-retry wrapper for transient errors.
 //
-// 目的: demo / 本番 run で Anthropic 529 overloaded / OpenAI 429 rate_limit /
-// Gemini 503 / ネット瞬断 などで loop が壊れるのを防ぐ。初回ユーザーが
-// 「AI 混雑してただけ」で「壊れてる」と判断して離脱するのを抑える。
+// Purpose: prevent the loop from breaking on Anthropic 529 overloaded / OpenAI 429 rate_limit /
+// Gemini 503 / brief network drops during demo or production runs. Stops first-time users from
+// concluding "it's broken" when really "the AI was just busy" and bouncing.
 //
-// 設計判断:
-//  - タイムアウト系は retry しない (既に長時間待った後のさらなる長時間待ちは UX 最悪)
-//  - 認証 / 形式エラー (4xx) は retry しない (何度叩いても結果不変)
-//  - overloaded / 5xx / ECONNRESET / rate_limit のみ retry
-//  - backoff は 3s → 7.5s → 18.75s (factor 2.5, base 3s)。総追加遅延 ~29s
-//  - retry 通知は stderr に 1 行 print (サイレント retry はブラックボックス化するので避ける)
+// Design decisions:
+//  - Don't retry timeouts (waiting even longer after already waiting a long time is the worst UX)
+//  - Don't retry auth / format errors (4xx) — same input gives same result
+//  - Only retry overloaded / 5xx / ECONNRESET / rate_limit
+//  - Backoff: 3s → 7.5s → 18.75s (factor 2.5, base 3s). ~29s total added delay
+//  - Print one stderr line on retry (silent retry becomes a black box — avoid that)
 
 export interface RetryOptions {
-  /** 総試行回数 (1 回目含む)。default 3 = 最初 + retry 2 回 */
+  /** Total attempts (including the first). default 3 = initial + 2 retries */
   maxAttempts?: number;
-  /** 初回 backoff (ms)。default 3000 */
+  /** Initial backoff (ms). default 3000 */
   baseDelayMs?: number;
-  /** backoff 倍率。default 2.5 */
+  /** Backoff multiplier. default 2.5 */
   factor?: number;
-  /** retry 時に 1 行 notify するためのコールバック */
+  /** Callback invoked once per retry to emit a notification line */
   onRetry?: (info: { attempt: number; error: unknown; delayMs: number }) => void;
-  /** テスト時のみ: sleep を差し替えて backoff を実時間消費しない */
+  /** Tests only: replace sleep so backoff doesn't consume real time */
   sleepFn?: (ms: number) => Promise<void>;
 }
 
@@ -46,24 +46,24 @@ export async function withRetry<T>(fn: () => Promise<T>, opts: RetryOptions = {}
   throw lastError;
 }
 
-/** 「一時的に混んでるだけ、もう一回叩けば通るかも」系のエラーを判定。
- *  以下に true を返す:
+/** Decides whether an error looks like "just transiently busy, try again".
+ *  Returns true for:
  *    - HTTP 429 / 529 / 5xx
  *    - Node errno: ECONNRESET / ETIMEDOUT / EAI_AGAIN / ENETUNREACH / ECONNREFUSED
- *    - message に "overloaded" / "rate limit" / "rate_limit" / "temporarily unavailable" /
- *      "service unavailable" / "bad gateway" / "gateway timeout" を含む
- *  false を返す (permanent として fail-fast):
- *    - HTTP 4xx (429 除く) — 認証 / 形式エラー
- *    - timeout 系 — 既に長時間待った後のさらなる待ちは UX 上 NG
+ *    - message contains "overloaded" / "rate limit" / "rate_limit" / "temporarily unavailable" /
+ *      "service unavailable" / "bad gateway" / "gateway timeout"
+ *  Returns false (treat as permanent, fail-fast) for:
+ *    - HTTP 4xx (excluding 429) — auth / format errors
+ *    - timeouts — UX-bad to wait even longer after already waiting a long time
  */
 export function isTransientError(err: unknown): boolean {
   if (err == null || typeof err !== "object") return false;
   const e = err as Record<string, unknown>;
 
-  // タイムアウトは明示的に除外 (SDK によっては Error.message 経由で来るので先に判定)
+  // Explicitly exclude timeouts (some SDKs surface them via Error.message, so check first)
   const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
   if (msg.includes("timeout") || msg.includes("timed out")) {
-    // 例外: gateway timeout は 504 で server 側問題なので retry してよい
+    // Exception: gateway timeout is 504, a server-side problem, so retrying is fine
     if (msg.includes("gateway timeout") || msg.includes("504")) {
       // fallthrough to generic retry
     } else {
@@ -71,7 +71,7 @@ export function isTransientError(err: unknown): boolean {
     }
   }
 
-  // HTTP status (Anthropic / OpenAI SDK は err.status を付ける)
+  // HTTP status (Anthropic / OpenAI SDKs attach err.status)
   const status = typeof e.status === "number" ? e.status
     : typeof e.statusCode === "number" ? e.statusCode
     : undefined;
@@ -90,7 +90,7 @@ export function isTransientError(err: unknown): boolean {
     return true;
   }
 
-  // message heuristics (CLI provider / 汎用)
+  // message heuristics (CLI providers / generic)
   if (msg.includes("overloaded")) return true;
   if (msg.includes("rate limit") || msg.includes("rate_limit")) return true;
   if (msg.includes("temporarily unavailable")) return true;

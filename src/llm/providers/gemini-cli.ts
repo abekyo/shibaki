@@ -1,13 +1,13 @@
-// Gemini CLI 経由の critic provider (Google @google/gemini-cli)。
-// 前提: ユーザーが `gemini` CLI を install + 認証済み (Google OAuth / API key のどちらか)。
-// Shibaki 側では GEMINI_API_KEY を持たない運用が可能。
+// Critic provider via the Gemini CLI (Google @google/gemini-cli).
+// Prerequisite: the user has installed and authenticated the `gemini` CLI (Google OAuth or API key).
+// Shibaki does not need to hold GEMINI_API_KEY for this path.
 //
-// 呼び出し形 (non-interactive):
+// Invocation (non-interactive):
 //   gemini -p "<prompt>" --model <model>
-// stdout はモデル応答の raw text。JSON wrap 無し。
+// stdout is the raw model response text. No JSON wrapping.
 //
-// 注意: gemini CLI は flag 体系が比較的活発に変わる。ユーザーが別 flag を
-// 使いたい場合は GEMINI_CLI_BIN でバイナリ自体を wrapper script に差し替える想定。
+// Note: the gemini CLI flag scheme changes fairly actively. If the user wants different flags,
+// the expectation is to override the binary itself with a wrapper script via GEMINI_CLI_BIN.
 import type { LLMProvider, CallOptions, RawResponse } from "../types.ts";
 import { cliSpawn, composeCliPrompt } from "./cliShared.ts";
 
@@ -22,7 +22,7 @@ export const geminiCliProvider: LLMProvider = {
   async call(opts: CallOptions): Promise<RawResponse> {
     const bin = resolveBin();
     const prompt = composeCliPrompt(opts.system, opts.user, opts.jsonMode ?? false);
-    // -p で non-interactive print mode。prompt は stdin 経由 (arg だと長文で OS 上限に当たる)。
+    // -p selects non-interactive print mode. Prompt goes via stdin (passing as an arg hits the OS arg-length limit on long prompts).
     const args = ["-p", "--model", opts.model];
 
     const res = await cliSpawn({ bin, args, stdin: prompt });

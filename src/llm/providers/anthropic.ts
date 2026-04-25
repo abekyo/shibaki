@@ -13,9 +13,9 @@ function client(): Anthropic {
   return _client;
 }
 
-// Anthropic SDK は response_format 非対応のため、jsonMode=true のときは system prompt に
-// JSON 強制指示を append して対応する (perfect ではないが callJson 側の defensive parser と
-// 併用すれば安定する)。
+// The Anthropic SDK does not support response_format, so when jsonMode=true we append
+// JSON-forcing instructions to the system prompt (not perfect, but stable enough when
+// combined with the defensive parser on the callJson side).
 const JSON_MODE_SUFFIX =
   "\n\n## Output format (strict)\n" +
   "- Reply with EXACTLY ONE valid JSON object\n" +

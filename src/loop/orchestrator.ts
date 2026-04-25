@@ -1,7 +1,7 @@
-// 閉ループ本体: main agent → verify → rebuttal → (refuted なら再試行).
+// Closed-loop core: main agent → verify → rebuttal → (retry if refuted).
 //
-// 各試行ごとに critic の verdict を stderr へ可視化する (透明性優先)。
-// 完遂の必要十分条件: verify.exit === 0 かつ rebuttal.verdict === "unable_to_refute".
+// Surface the critic's verdict to stderr on every try (transparency first).
+// Necessary and sufficient condition for completion: verify.exit === 0 and rebuttal.verdict === "unable_to_refute".
 import type { RunArgs } from "../cli/args.ts";
 import { runMainAgent, killAllChildren } from "../agent/mainAgent.ts";
 import { runVerify } from "../agent/verify.ts";
@@ -20,6 +20,7 @@ import {
   type Pattern,
 } from "../memory/patterns.ts";
 import { buildPatternsSnapshot } from "../memory/snapshot.ts";
+import { red, green } from "../cli/colors.ts";
 
 export interface LoopResult {
   ok: boolean;
@@ -39,10 +40,15 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
   const debugLog: DebugLogger = args.debug
     ? await openDebugLog(process.cwd())
     : NULL_LOGGER;
-  if (args.debug) {
-    progress(`▶ task accepted (verify: ${args.verify}) [debug: ${debugLog.path}]`);
-  } else {
-    progress(`▶ task accepted (verify: ${args.verify})`);
+  // --quiet (CI / scripting): suppress per-try progress markers, spinner, and
+  // critic dialog. The final ✓/✗ summary, preflight failures, retry warnings,
+  // and human meta-question prompts (--ask-human) are always shown.
+  if (!args.quiet) {
+    if (args.debug) {
+      progress(`▶ task accepted (verify: ${args.verify}) [debug: ${debugLog.path}]`);
+    } else {
+      progress(`▶ task accepted (verify: ${args.verify})`);
+    }
   }
   await debugLog.write("start", { task: args.task, verify: args.verify, agent: args.agent, cfg });
 
@@ -51,20 +57,20 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
   const pastRebuttals: PastRebuttalBrief[] = [];
   const pastDiffs: PastDiffBrief[] = [];
 
-  // Phase 2: 失敗モード辞書 / 成功パターン辞書を session 開始時に load
-  // 以降 session 中は不変 (frozen snapshot semantics)
+  // Phase 2: load failure-mode and success-pattern dictionaries at session start.
+  // Immutable for the rest of the session (frozen snapshot semantics).
   const patternsPath = defaultPatternsPath();
   const loadedPatterns = await loadPatterns(patternsPath);
   const patternsSnapshot = buildPatternsSnapshot(loadedPatterns);
   const observedPatterns: { type: "failure" | "success"; pattern_name: string; description: string }[] = [];
 
-  // Level 2: プロジェクト規約 / 構造 / 依存 (frozen, agent と異なる視点の素材)
+  // Level 2: project conventions / structure / dependencies (frozen, material from a different angle than the agent's).
   const projectContext = await collectProjectContext(process.cwd());
 
-  // Ctrl-C / SIGTERM の最低保証: observedPatterns を辞書に書き戻してから exit。
-  // patterns dictionary が session 横断学習の中核なので、長時間 run を途中で
-  // 諦めるヘビーユーザにも「学習が残る」体験を保証する。
-  // 二度押しは即死 (痺れを切らした user の脱出口を残す)。
+  // Minimum guarantee on Ctrl-C / SIGTERM: write observedPatterns back to the dictionary before exit.
+  // The patterns dictionary is the core of cross-session learning, so heavy users who
+  // bail on long runs still get the "learning is preserved" experience.
+  // Double-press = hard exit (escape hatch for impatient users).
   const cleanupSignal = installInterruptHandler(patternsPath, loadedPatterns, observedPatterns);
 
   try {
@@ -74,16 +80,18 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
       const s = budgetSummary(budget);
       await debugLog.write("escalate", { breach, ...s, pattern_name: lastPreemptHint || "unknown" });
       escalate(s.tries, s.elapsedSec, breach, lastPreemptHint || "unknown");
-      // 失敗時も観測した failure pattern は辞書に積む (次回 preempt で活きる)
+      // Even on failure, push observed failure patterns into the dictionary (useful for next preempt)
       await persistObservedPatterns(patternsPath, loadedPatterns, observedPatterns);
       return { ok: false, tries: s.tries, elapsedSec: s.elapsedSec, costUsd: s.costUsd, pattern_name: lastPreemptHint || "unknown" };
     }
 
     budget.tries += 1;
-    progress(`▶ try ${budget.tries}/${cfg.maxTries}`);
+    if (!args.quiet) progress(`▶ try ${budget.tries}/${cfg.maxTries}`);
 
-    // 1. main agent を走らせる
-    const agentTick = phaseTicker("agent working");
+    // 1. run the main agent — spinner suppressed in quiet mode (NULL_TICKER no-ops both start/stop)
+    const agentTick = args.quiet
+      ? NULL_TICKER
+      : phaseTicker("agent working", { expectedRange: "20-60s" });
     const agent = await runMainAgent({
       agentCmd: args.agent,
       task: args.task,
@@ -95,7 +103,7 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
     // 2. verify
     const verify = await runVerify(args.verify);
 
-    // 3. レベル 1 拡張: 深い分析のための文脈ファイルを収集
+    // 3. Level 1 expansion: collect context files for deeper analysis
     const contextFiles = await collectContextFiles({
       cwd: process.cwd(),
       diff: agent.diff,
@@ -104,8 +112,10 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
       maxBytesPerFile: 20_000,
     });
 
-    // 4. rebuttal (critic)
-    const criticTick = phaseTicker("critic deliberating");
+    // 4. rebuttal (critic) — spinner suppressed in quiet mode
+    const criticTick = args.quiet
+      ? NULL_TICKER
+      : phaseTicker("critic deliberating", { expectedRange: "30-90s" });
     let criticDebug: { system: string; user: string; raw: any } | null = null;
     const rebuttal = await runRebuttal(
       {
@@ -119,18 +129,19 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
         diff: agent.diff,
         tryIndex: budget.tries,
         maxTries: cfg.maxTries,
-        pastRebuttals: pastRebuttals.slice(-5),  // 直近 5 試行分まで (context 肥大防止)
+        pastRebuttals: pastRebuttals.slice(-5),  // last 5 tries only (prevent context bloat)
         modifiedFiles: contextFiles.modifiedFiles,
         testFiles: contextFiles.testFiles,
-        pastDiffs: pastDiffs.slice(-2),  // 直近 2 試行の diff (agent の変更履歴)
-        patternsSnapshot,                  // 1 session 中は不変 (frozen)
-        projectContext,                    // Level 2: 別視点の素材 (frozen)
+        dependencyFiles: contextFiles.dependencyFiles,  // Phase 1: 1-hop import expansion
+        pastDiffs: pastDiffs.slice(-2),  // last 2 tries' diffs (agent's change history)
+        patternsSnapshot,                  // immutable for the session (frozen)
+        projectContext,                    // Level 2: material from a different angle (frozen)
       },
       args.debug ? (e) => { criticDebug = e; } : undefined,
     );
     criticTick.stop();
 
-    // コスト累積
+    // accumulate cost
     if (rebuttal.meta.usage && rebuttal.meta.model) {
       budget.costUsd += estimateCostUsd(
         rebuttal.meta.model,
@@ -139,22 +150,23 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
       );
     }
 
-    // critic の判定をユーザに見せる。原則 1 (= 内省を隠す) は撤回した:
-    // critic が core value なのに見えないと「役に立ったか」を user が判定できず、
-    // 結果として cost だけ増えた black box に見える。
-    printCriticVerdict(rebuttal);
+    // Show the critic's verdict to the user. Principle 1 (= hide introspection) has been retracted:
+    // the critic is the core value, but if it's invisible the user can't judge "was it useful",
+    // so the run looks like a black box that just costs more.
+    // --quiet suppresses the per-try dialog (CI / scripting) — the final summary line still fires.
+    if (!args.quiet) printCriticVerdict(rebuttal);
 
     if (rebuttal.preempt_hint.pattern_name && rebuttal.preempt_hint.pattern_name !== "unknown") {
       lastPreemptHint = rebuttal.preempt_hint.pattern_name;
     }
 
-    // Phase 2: 辞書への persist は質ゲート付き
+    // Phase 2: persisting to the dictionary is quality-gated.
     //
-    // failure pattern として残すのは「真の失敗の根拠がある」場合のみ:
-    //   - verify.ok=false (verify 自体が落ちた = 客観的失敗) もしくは
-    //   - verdict=refuted かつ evidence_verified=true (引用検証済の真の指摘)
-    // tryIndex=1 で強制 refuted になっただけで evidence 無しの pattern は除外
-    // (これを入れると幻覚 pattern が辞書を汚染する)
+    // Only record a failure pattern when there is real evidence of failure:
+    //   - verify.ok=false (verify itself failed = objective failure), or
+    //   - verdict=refuted AND evidence_verified=true (quote-verified real critique)
+    // Exclude patterns that became refuted only due to forced refuted at tryIndex=1 with no evidence
+    // (admitting these would let hallucinated patterns pollute the dictionary).
     const isGenuineFailure =
       !verify.ok ||
       (rebuttal.verdict === "refuted" && rebuttal.evidence_verified && rebuttal.attack_angles.length > 0);
@@ -169,7 +181,7 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
         description: rebuttal.preempt_hint.description,
       });
     }
-    // success pattern: verdict=unable_to_refute + insight.kind=confirmation のときのみ
+    // success pattern: only when verdict=unable_to_refute AND insight.kind=confirmation
     if (
       rebuttal.verdict === "unable_to_refute" &&
       rebuttal.insight.kind === "confirmation" &&
@@ -216,25 +228,25 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
       criticPrompt: criticDebug,
     });
 
-    // 4. 完遂判定
+    // 4. completion check
     if (verify.ok && rebuttal.verdict === "unable_to_refute") {
       const s = budgetSummary(budget);
       await debugLog.write("success", s);
-      // 完遂時の confirmation insight は最終 "why:" 行として表示する。
-      // 各試行ごとの詳細な critic ブロックは printCriticVerdict() が既に出している
-      // ので、ここでは最後に 1 行要約するだけ。
+      // On completion, show the confirmation insight as the final "why:" line.
+      // The per-try detailed critic block is already printed by printCriticVerdict(),
+      // so here we just emit a one-line summary at the end.
       const userInsight =
         rebuttal.insight.kind === "confirmation" && rebuttal.insight.content
           ? rebuttal.insight.content
           : "";
       success(s.tries, s.elapsedSec, s.costUsd, userInsight);
-      // Phase 2: 観測した patterns を辞書に書き戻す (frozen snapshot を変えない、
-      // 次セッションから反映される)
+      // Phase 2: write observed patterns back to the dictionary (does not mutate the frozen snapshot;
+      // takes effect from the next session)
       await persistObservedPatterns(patternsPath, loadedPatterns, observedPatterns);
       return { ok: true, tries: s.tries, elapsedSec: s.elapsedSec, costUsd: s.costUsd };
     }
 
-    // 5. 履歴に今回の rebuttal と diff を追加 (次試行の critic 入力に渡すため)
+    // 5. append this try's rebuttal and diff to history (feed into the next try's critic input)
     pastRebuttals.push({
       tryIndex: budget.tries,
       reason: rebuttal.reason,
@@ -243,14 +255,14 @@ export async function runLoop(args: RunArgs): Promise<LoopResult> {
     });
     pastDiffs.push({ tryIndex: budget.tries, diff: agent.diff });
 
-    // 5.5. Shibaki のコア体験: scope drift 検出 → human meta 補正
+    // 5.5. Shibaki core experience: scope-drift detection → human meta correction
     let humanMetaCorrection = "";
     if (args.ask && rebuttal.scope_drift_detected && rebuttal.scope_question) {
       humanMetaCorrection = await askHumanMetaQuestion(rebuttal.scope_question);
       await debugLog.write("human_meta", { question: rebuttal.scope_question, response: humanMetaCorrection });
     }
 
-    // 6. 次試行用のコンテキストを組む (agent に読ませる)
+    // 6. build extra context for the next try (fed into the agent)
     extraContext = buildExtraContext(rebuttal, humanMetaCorrection);
   }
   } finally {
@@ -269,16 +281,16 @@ function installInterruptHandler(
   let firing = false;
   const onSignal = (sig: NodeJS.Signals) => {
     if (firing) {
-      // 二度目: 救済を諦めて即死 (130 = 128+SIGINT)
+      // Second press: give up on rescue, hard exit (130 = 128+SIGINT)
       process.stderr.write("\n  force exit\n");
       process.exit(130);
     }
     firing = true;
     process.stderr.write(`\n⚠ ${sig} received — saving patterns and exiting...\n`);
-    // 子プロセスツリー (claude / bun test 等) を即座に kill。
-    // ここで殺さないと孤児化して API call の課金だけが発生する。
+    // Kill the child process tree (claude / bun test / etc.) immediately.
+    // Without this, they orphan and keep racking up API call charges.
     killAllChildren("SIGTERM");
-    // 同期路で patterns を save。失敗しても exit (silent fail せず stderr に出す)。
+    // Save patterns synchronously. Exit even on failure (don't fail silently — write to stderr).
     persistObservedPatterns(patternsPath, loaded, observed)
       .then(() => {
         if (observed.length > 0) {
@@ -394,8 +406,14 @@ function progress(line: string): void {
 // per try; the trust gain is being able to see the AI-vs-AI dialog directly.
 function printCriticVerdict(r: Awaited<ReturnType<typeof runRebuttal>>): void {
   const out = process.stderr;
-  const sym = r.verdict === "refuted" ? "✗" : "✓";
-  out.write(`  ${sym} critic: ${r.verdict}${r.reason ? ` — ${r.reason}` : ""}\n`);
+  // On-brand verb choice: refuted → "slaps" (the project's namesake), unable_to_refute → "approves".
+  // Replaces the previous bare "✗ critic: refuted —" / "✓ critic: unable_to_refute" lines.
+  // Color carries the same semantic (red = bad, green = good) for at-a-glance scanning.
+  if (r.verdict === "refuted") {
+    out.write(`  ${red("✗")} critic ${red("slaps")}: ${r.reason || ""}\n`);
+  } else {
+    out.write(`  ${green("✓")} critic ${green("approves")}${r.reason ? `: ${r.reason}` : ""}\n`);
+  }
 
   if (r.scope_drift_detected && r.scope_question) {
     out.write(`    scope drift: ${r.scope_question}\n`);
@@ -408,11 +426,11 @@ function printCriticVerdict(r: Awaited<ReturnType<typeof runRebuttal>>): void {
     }
   }
 
-  // 表示上限は field 別に設定。shibaki の本質価値 (AI 対話の中身) が 200 文字 cap で
-  // 切れる問題を dogfood で確認したため、各 field の典型長に合わせて緩和:
-  //  - evidence は引用ベースで長文化しやすい → 800
-  //  - counter-example はコード / 具体例で中程度 → 600
-  //  - insight は学び本文、切れると価値激減 → 600
+  // Display caps set per field. Dogfood confirmed that Shibaki's core value (AI dialog content)
+  // was being truncated at a 200-char cap, so we relaxed it per typical field length:
+  //  - evidence is quote-based and tends to be long → 800
+  //  - counter-example is code / concrete-example, medium length → 600
+  //  - insight is the actual learning; truncating gutted the value → 600
   if (r.counter_example.kind !== "none" && r.counter_example.content) {
     out.write(`    counter-example (${r.counter_example.kind}): ${truncate(r.counter_example.content, 600)}\n`);
   }
@@ -431,22 +449,43 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }
 
-// Live elapsed-seconds ticker for slow phases (agent / critic), so the user
-// sees the loop is alive instead of facing 30-60s of dead air. On a TTY,
-// the line updates in place via \r every second; on non-TTY (CI / pipe to
-// file), we only print start and end markers (no \r noise in logs).
-function phaseTicker(label: string): { stop: () => void } {
+// Live ticker for slow phases (agent / critic), so the user sees the loop
+// is alive instead of facing 30-60s of dead air.
+//
+// TTY: animated Braille spinner + elapsed seconds + (optional) expected
+// duration hint, updated in place via \r every 80ms (~12 fps — smooth
+// enough to read as "moving" without burning CPU).
+// Non-TTY (CI / pipe to file): only print start and end markers
+// (no \r noise in logs).
+//
+// expectedRange is a per-phase hint of "this is roughly how long it normally takes".
+// Lets the user judge for themselves whether "60s elapsed and got refuted = abnormal?".
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const SPINNER_INTERVAL_MS = 80;
+
+// No-op ticker used when --quiet suppresses spinner output. Same shape as phaseTicker's
+// return so call sites don't have to special-case.
+const NULL_TICKER = { stop: () => {} } as const;
+
+function phaseTicker(
+  label: string,
+  opts: { expectedRange?: string } = {},
+): { stop: () => void } {
   const start = Date.now();
   const isTty = !!process.stderr.isTTY;
   let interval: ReturnType<typeof setInterval> | null = null;
+  const hint = opts.expectedRange ? ` (~${opts.expectedRange} expected)` : "";
 
   if (isTty) {
-    process.stderr.write(`  ↳ ${label}... 0s`);
+    let frame = 0;
+    process.stderr.write(`  ${SPINNER_FRAMES[0]} ${label}... 0s${hint}`);
     interval = setInterval(() => {
+      frame = (frame + 1) % SPINNER_FRAMES.length;
       const sec = Math.floor((Date.now() - start) / 1000);
-      // \r で行頭に戻り、padding 用 spaces で前回末尾を消す
-      process.stderr.write(`\r  ↳ ${label}... ${sec}s   `);
-    }, 1000);
+      // \r returns to line start; trailing padding spaces erase the previous tail
+      process.stderr.write(`\r  ${SPINNER_FRAMES[frame]} ${label}... ${sec}s${hint}   `);
+    }, SPINNER_INTERVAL_MS);
   } else {
     process.stderr.write(`  ↳ ${label}...\n`);
   }
@@ -456,8 +495,8 @@ function phaseTicker(label: string): { stop: () => void } {
       const sec = Math.floor((Date.now() - start) / 1000);
       if (interval) {
         clearInterval(interval);
-        // 最終時間で行を確定 + 改行
-        process.stderr.write(`\r  ↳ ${label} (${sec}s) ✓     \n`);
+        // Finalize the line with the final elapsed time + newline (✓ green for symmetry with verdict)
+        process.stderr.write(`\r  ↳ ${label} (${sec}s) ${green("✓")}     \n`);
       } else {
         process.stderr.write(`  ↳ ${label} done (${sec}s)\n`);
       }
@@ -465,18 +504,48 @@ function phaseTicker(label: string): { stop: () => void } {
   };
 }
 
-function success(tries: number, elapsedSec: number, costUsd: number, insight?: string): void {
+// ─── Stable final-line contract (semi-structured output) ──────────────────────
+// Format (locked, do NOT break without bumping major version):
+//
+//   Success: ✓ done (<time> / <tries> tries / $<cost>)
+//   Failure: ✗ failed (<time> / <tries> tries / <reason>)
+//
+// where:
+//   <time>   = "<N>s" or "<M>m<N>s"
+//   <tries>  = positive integer
+//   <cost>   = "0.000" through "9999.999" (3 decimals; "0.000" in Plan mode)
+//   <reason> = "max tries hit" | "timeout" | "cost cap hit"
+//
+// Locked by tests/finalLineFormat.test.ts via regex. Documented as
+// machine-parseable in `shibaki run --help` (LONG help).
+//
+// Field order is intentional: time / tries / extra. Both lines share this
+// shape so a single regex can capture either:
+//   /^(✓ done|✗ failed) \(([^/]+) \/ (\d+) tries \/ (.+)\)$/
+
+function formatTime(elapsedSec: number): string {
   const mins = Math.floor(elapsedSec / 60);
   const secs = elapsedSec % 60;
-  const time = mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
-  process.stderr.write(`✓ done (${time} / ${tries} tries / $${costUsd.toFixed(3)})\n`);
+  return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
+}
+
+export function formatSuccessLine(tries: number, elapsedSec: number, costUsd: number): string {
+  return `✓ done (${formatTime(elapsedSec)} / ${tries} tries / $${costUsd.toFixed(3)})`;
+}
+
+export function formatFailureLine(tries: number, elapsedSec: number, reason: string): string {
+  return `✗ failed (${formatTime(elapsedSec)} / ${tries} tries / ${reason})`;
+}
+
+function success(tries: number, elapsedSec: number, costUsd: number, insight?: string): void {
+  process.stderr.write(formatSuccessLine(tries, elapsedSec, costUsd) + "\n");
   if (insight) {
     process.stderr.write(`  why: ${insight}\n`);
   }
 }
 
-// observedPatterns を loadedPatterns と merge して prune して保存。
-// 何も観測していなければ no-op。
+// Merge observedPatterns into loadedPatterns, prune, and save.
+// No-op if nothing was observed.
 async function persistObservedPatterns(
   path: string,
   loaded: Pattern[],
@@ -492,12 +561,9 @@ async function persistObservedPatterns(
 }
 
 function escalate(tries: number, elapsedSec: number, breach: string, pattern: string): void {
-  const mins = Math.floor(elapsedSec / 60);
-  const secs = elapsedSec % 60;
-  const time = mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
-  const breachLabel =
+  const reason =
     breach === "tries" ? "max tries hit" : breach === "timeout" ? "timeout" : "cost cap hit";
-  process.stderr.write(`✗ failed (${tries} tries / ${time} / ${breachLabel})\n`);
+  process.stderr.write(formatFailureLine(tries, elapsedSec, reason) + "\n");
   process.stderr.write(`  stuck pattern: ${pattern}\n`);
   process.stderr.write(`  recommendation: review manually\n`);
 }

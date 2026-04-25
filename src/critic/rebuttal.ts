@@ -1,22 +1,22 @@
-// Rebuttal Critic — main agent の出力を攻撃的に詰め、反例を実行可能な形で提示する。
+// Rebuttal Critic — aggressively pushes back on the main agent's output and presents counter-examples in executable form.
 //
-// 入力: task, verify_cmd, verify_result (exit/stdout/stderr), agent stdout, diff, tryIndex
-// 出力: { verdict: "refuted" | "unable_to_refute", counter_example, evidence, attack_angles, preempt_hint }
+// Input: task, verify_cmd, verify_result (exit/stdout/stderr), agent stdout, diff, tryIndex
+// Output: { verdict: "refuted" | "unable_to_refute", counter_example, evidence, attack_angles, preempt_hint }
 //
-// 北極星原則:
-//   1. agent が読むための出力 (人間に出さない)
-//   2. 別プロバイダ (CRITICAL tier = OpenAI デフォルト)
-//   3. 反例は実行可能 (failing test snippet / 入力値 / verify 詐称の診断)
+// North Star principles:
+//   1. Output for the agent to read (not for humans)
+//   2. Different provider (CRITICAL tier = OpenAI by default)
+//   3. Counter-examples are executable (failing test snippet / input value / verify-fakery diagnosis)
 //
-// 本ファイルで明文化する検証可能性の契約:
-//   - counter_example.kind は failing_test | input_case | verify_bypass | none のみ
-//     (code_inspection を削除。自然言語指摘の逃げ道を塞ぐ = 原則3)
-//   - 判定基準は機械的: attack_angles が 0 本のときのみ unable_to_refute
-//   - 1 試行目での unable_to_refute は無効化 (sycophancy early-out を塞ぐ)
-//   - preempt_hint は { pattern_name (snake_case), description } に構造化
-//   - 履歴: past_rebuttals を渡すことで critic が同じ角度を繰り返さず、新規角度を絞り出す (穴 2)
-//   - evidence: haystack (diff + verify_stdout/stderr + agent_stdout) に引用が含まれるかを Shibaki 側で検証 (穴 7)
-//   - context: 変更ファイル全文 + テストファイル全文 + 過去 diff を渡して深い分析を可能に (レベル 1 拡張)
+// Verifiability contract codified in this file:
+//   - counter_example.kind is restricted to failing_test | input_case | verify_bypass | none
+//     (code_inspection removed. Closes the natural-language-critique escape hatch = principle 3)
+//   - Mechanical decision rule: unable_to_refute only when attack_angles is 0
+//   - unable_to_refute on try 1 is disabled (closes the sycophancy early-out)
+//   - preempt_hint is structured as { pattern_name (snake_case), description }
+//   - History: passing past_rebuttals prevents the critic from repeating the same angle and forces new angles (Gap 2)
+//   - evidence: Shibaki verifies whether the quote exists in the haystack (diff + verify_stdout/stderr + agent_stdout) (Gap 7)
+//   - context: pass full content of modified files + full content of test files + past diffs to enable deep analysis (Level 1 extension)
 import { callJson, CRITICAL, asString, asArray } from "../llm.ts";
 import type { CallMeta } from "../llm/types.ts";
 import type { FileSnapshot } from "../agent/context.ts";
@@ -46,34 +46,38 @@ export interface RebuttalInput {
   tryIndex: number;
   maxTries: number;
   pastRebuttals?: PastRebuttalBrief[];
-  // レベル 1 拡張: 深い分析のための文脈
-  modifiedFiles?: FileSnapshot[];  // 今回の diff で変更されたファイルの全文
-  testFiles?: FileSnapshot[];      // verify で使うテストファイルの全文
-  pastDiffs?: PastDiffBrief[];     // 過去試行の diff (直近 2 試行分)
-  // Phase 2 拡張: 失敗モード辞書 / 成功パターン辞書 (frozen snapshot)
-  patternsSnapshot?: string;       // session 開始時に固定、毎試行同じ内容を渡す
-  // Level 2: project 全体の規約 / 構造 / 依存 (別視点を生む素材、frozen)
+  // Level 1 extension: context for deep analysis
+  modifiedFiles?: FileSnapshot[];  // Full content of files changed in this diff
+  testFiles?: FileSnapshot[];      // Full content of test files used by verify
+  pastDiffs?: PastDiffBrief[];     // Past tries' diffs (most recent 2 tries)
+  // Phase 1: 1-hop import auto-follow. Bundle up to 5 relative-path files
+  // imported by modifiedFiles so the Critic does not finish with a surface
+  // analysis ignorant of dependency behavior (Cheat 9).
+  dependencyFiles?: FileSnapshot[];
+  // Phase 2 extension: failure-mode dictionary / success-pattern dictionary (frozen snapshot)
+  patternsSnapshot?: string;       // Fixed at session start; same content passed every try
+  // Level 2: project-wide conventions / structure / deps (material that generates a different perspective, frozen)
   projectContext?: ProjectContext;
 }
 
 export type CounterExampleKind = "failing_test" | "input_case" | "verify_bypass" | "none";
 
 export interface PreemptHint {
-  pattern_name: string;   // snake_case のみ
-  description: string;    // 1 行、英語短文推奨
+  pattern_name: string;   // snake_case only
+  description: string;    // 1 line, short English recommended
 }
 
 export type InsightKind =
-  | "root_cause"      // 症状と根本原因の区別
-  | "framing"         // 問題の捉え方の転換
-  | "pattern"         // 一般原則 / 再利用可能なパターン
-  | "confirmation"    // 正しいときの肯定 + なぜ正しいかの言語化
-  | "scope_drift"     // 元タスクから範囲が drift している (process 中毒のサイン)
+  | "root_cause"      // Distinguish symptom from root cause
+  | "framing"         // Shift in how the problem is framed
+  | "pattern"         // General principle / reusable pattern
+  | "confirmation"    // Affirmation when correct + verbalize why it is correct
+  | "scope_drift"     // Scope has drifted from the original task (sign of process addiction)
   | "none";
 
 export interface Insight {
   kind: InsightKind;
-  content: string;    // 1-3 行のメタレベル洞察
+  content: string;    // 1-3 line meta-level insight
 }
 
 export interface RebuttalOutput {
@@ -84,13 +88,13 @@ export interface RebuttalOutput {
     content: string;
   };
   evidence: string;
-  evidence_verified: boolean;   // 穴 7: haystack に引用が含まれるか
+  evidence_verified: boolean;   // Gap 7: whether the quote is contained in the haystack
   attack_angles: string[];
-  insight: Insight;             // agent に気づきを与えるメタ洞察 (正しい時も含む)
+  insight: Insight;             // Meta-insight giving the agent a realization (including when correct)
   preempt_hint: PreemptHint;
-  // 第 3 軸: 目的整合 (scope drift) — process 中毒検出
-  scope_drift_detected: boolean;       // diff が元タスクから drift しているか
-  scope_question: string;              // human への 1 行 meta question (空文字なら問わない)
+  // Third axis: goal alignment (scope drift) — process-addiction detection
+  scope_drift_detected: boolean;       // Whether the diff has drifted from the original task
+  scope_question: string;              // 1-line meta question for the human (empty string = do not ask)
   meta: {
     provider?: string;
     model?: string;
@@ -310,9 +314,9 @@ export async function runRebuttal(
   debugSink?: (entry: { system: string; user: string; raw: any }) => void,
 ): Promise<RebuttalOutput> {
   const user = buildUserPrompt(input);
-  // frozen snapshot (失敗モード辞書 / 成功パターン辞書) を system prompt 末尾に追記。
-  // セッション中は不変 (orchestrator が同じ snapshot を毎試行渡す)、Phase 2 以降に
-  // Anthropic prompt cache の cache_control をここに置く想定の境界。
+  // Append the frozen snapshot (failure-mode dictionary / success-pattern dictionary) to the end of the system prompt.
+  // Invariant during a session (orchestrator passes the same snapshot every try); from Phase 2 onward this is the
+  // intended boundary at which to place Anthropic prompt cache cache_control.
   const system = input.patternsSnapshot ? `${SYSTEM}\n${input.patternsSnapshot}` : SYSTEM;
   const meta: CallMeta = {};
   const raw = await callJson<any>(CRITICAL, system, user, 2500, "rebuttal", meta);
@@ -405,6 +409,20 @@ function buildUserPrompt(i: RebuttalInput): string {
     lines.push(`Judge the agent's output against what the tests actually verify.`);
   }
 
+  // Phase 1: 1-hop dependencies (files imported by modified files).
+  // Material for judging the behavior of modified files together with how their dependencies behave.
+  if (i.dependencyFiles && i.dependencyFiles.length > 0) {
+    lines.push("");
+    lines.push(`# 1-hop dependencies (files imported by the modified files — for understanding helper / shared module behavior, NOT to attack)`);
+    lines.push(`Use these only to understand what the modified code calls into. These files were NOT changed in this diff. Attacks must still cite the diff itself.`);
+    for (const f of i.dependencyFiles) {
+      lines.push(`## ${f.path}${f.truncated ? " (truncated)" : ""}`);
+      lines.push("```");
+      lines.push(f.content);
+      lines.push("```");
+    }
+  }
+
   // Level 1: past tries' diffs (so you see the agent's revision history)
   if (i.pastDiffs && i.pastDiffs.length > 0) {
     lines.push("");
@@ -469,21 +487,21 @@ function tail(s: string, n: number): string {
 
 const SNAKE_CASE = /^[a-z][a-z0-9_]*$/;
 
-// 穴 7: evidence の引用一致検証。
-// LLM が返す evidence が haystack (diff / stdouts / stderrs) 内に実在するかチェック。
-// 長い引用は意味単位に分割して部分一致を許容 (連続した 20 文字以上の断片が存在すれば OK)。
+// Gap 7: verify the cited evidence quote actually exists.
+// Check whether the evidence the LLM returned actually exists in the haystack (diff / stdouts / stderrs).
+// Long quotes are split into semantic units and partial matches are allowed (OK if a contiguous fragment of 20+ chars exists).
 export function verifyEvidence(evidence: string, haystacks: string[]): boolean {
   const ev = evidence.trim();
   if (!ev) return false;
   const hay = haystacks.join("\n");
-  // まず丸ごと一致
+  // First try a whole match
   if (hay.includes(ev)) return true;
-  // 正規化 (空白の連続を 1 つにして比較)
+  // Normalize (collapse runs of whitespace to a single space and compare)
   const norm = (s: string) => s.replace(/\s+/g, " ").trim();
   const nh = norm(hay);
   const nev = norm(ev);
   if (nh.includes(nev)) return true;
-  // 部分一致: 20 文字以上の連続フラグメントが haystack にあるか
+  // Partial match: whether a contiguous fragment of 20+ chars exists in the haystack
   if (nev.length < 20) return false;
   for (let start = 0; start + 20 <= nev.length; start += 10) {
     const frag = nev.slice(start, Math.min(nev.length, start + 40));
@@ -495,31 +513,29 @@ export function verifyEvidence(evidence: string, haystacks: string[]): boolean {
 function sanitizePatternName(raw: string): string {
   const t = raw.trim().toLowerCase();
   if (SNAKE_CASE.test(t)) return t;
-  // 非 snake_case を強制変換: 英数以外を _ に、連続 _ を1つに
+  // Coerce non-snake_case: replace non-alphanumerics with _, collapse runs of _ to one
   const forced = t.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   return forced || "unknown";
 }
 
-/** verdict=refuted のときに reason に「具体的な fault 指摘」が入っているかを判定する gate。
- *  単純な negative word 検索は "no cheats detected" のような否定表現で誤判定するので、
- *  多語句 (fault を積極的に指摘しないと出ない phrase) で一致を見る。
+/** Gate that judges whether reason contains a "concrete fault accusation" when verdict=refuted.
+ *  A simple negative-word search would misfire on negations like "no cheats detected", so we
+ *  match on multi-word phrases (phrases that only appear when actively pointing out a fault).
  *
- *  dogfood run (2026-04-24) で opus が verdict=refuted + attack_angles=[] +
- *  "The extraction is correct ... verify passes clean" な reason を emit した
- *  のを catch するための gate。verify が通っていて attack が無く reason にも
- *  fault signal が無いなら、それは critic の自己矛盾出力なので unable_to_refute に
- *  矯正する。試験のため export している。
+ *  Gate to catch the case observed in the dogfood run (2026-04-24) where opus emitted
+ *  verdict=refuted + attack_angles=[] + a reason like "The extraction is correct ... verify passes clean".
+ *  If verify passes, there are no attacks, and reason has no fault signal, that is a self-contradictory
+ *  critic output and we coerce it to unable_to_refute. Exported for testing.
  */
 export function hasFaultSignal(reason: string): boolean {
   const s = reason.toLowerCase();
-  // これらの phrase が reason に含まれていれば「何か具体的な fault を指摘している」とみなす。
-  // 否定形 ("no X") で誤 match しないよう、多語句 or 特有 token を採用。
+  // If any of these phrases appear in reason, we consider it "pointing out some concrete fault".
   const faultPhrases = [
-    // 攻撃の典型句
+    // Typical attack phrases
     "agent claim", "but actually", "but in reality",
     "failed to", "did not implement", "did not include", "did not handle",
     "not actually",
-    // Mode A cheat patterns (prompt と同期)
+    // Mode A cheat patterns (kept in sync with prompt)
     "hardcoded", "stubbed", "placeholder", "bypass", "silenc",
     "hallucinat", "weakened", "inverted", "fabricat",
     "@ts-ignore", "@ts-expect", "eslint-disable",
@@ -528,11 +544,26 @@ export function hasFaultSignal(reason: string): boolean {
     "scope drift", "out of scope", "unauthorized",
     "over-reach", "overreach", "drifted", "off-task",
     "beyond what",
-    // 破綻表現
+    // Breakdown expressions
     "does not match", "doesn't match",
     "no actual change", "no_actual_change",
   ];
-  return faultPhrases.some((p) => s.includes(p));
+  // Negation guard: a phrase preceded by an explicit negation word
+  // ("no X", "without X", "didn't X", etc.) is the critic asserting *absence*
+  // of that fault. Honest case observed in bench/verify-bypass dogfood
+  // (2026-04-25): reason "Tests pass, no cheats, no scope drift" naively
+  // matched "scope drift" as a fault, blocking the Defect 2 gate from
+  // coercing verdict to unable_to_refute. Skip negated occurrences.
+  const negationRegex = /(?:\b(?:no|not|none|never|without|free of)|n't)\s+(?:any\s+|the\s+|all\s+|of\s+)?$/;
+  return faultPhrases.some((p) => {
+    let idx = 0;
+    while ((idx = s.indexOf(p, idx)) !== -1) {
+      const window = s.slice(Math.max(0, idx - 30), idx);
+      if (!negationRegex.test(window)) return true; // un-negated occurrence
+      idx += p.length;
+    }
+    return false;
+  });
 }
 
 export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
@@ -548,30 +579,30 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
     .filter(Boolean)
     .slice(0, 3);
 
-  // evidence の実在検証 (parseRebuttal 末尾で使う)。
-  // 幻覚 evidence に基づく attack_angles は無効票扱いする。
+  // Verify evidence exists (used at the end of parseRebuttal).
+  // attack_angles based on hallucinated evidence are treated as void votes.
   const evidence_raw = asString(raw?.evidence);
   const evidence_verified_precomputed = evidence_raw
     ? verifyEvidence(evidence_raw, [input.diff, input.verifyStdout, input.verifyStderr, input.agentStdout])
     : false;
 
-  // 判定の機械的確定 (LLM の verdict は参考値、最終判定は Shibaki 側で確定する)
-  //   - verify.ok=false → refuted 固定
-  //   - attack_angles >= 1 かつ evidence_verified=true → refuted (根拠付きの攻撃)
-  //   - attack_angles >= 1 だが evidence_verified=false かつ tryIndex>=2 → 幻覚扱いで unable_to_refute
-  //     (critic が仕事を作るために空中戦をしている = false negative ループ回避)
-  //   - tryIndex=1 で attack_angles=0 → refuted (sycophancy early-out を塞ぐ)
-  //   - それ以外 (attack_angles=0 かつ verify.ok=true かつ tryIndex>=2) → unable_to_refute
+  // Mechanical determination of the verdict (the LLM's verdict is advisory; Shibaki finalizes the decision)
+  //   - verify.ok=false → refuted (fixed)
+  //   - attack_angles >= 1 and evidence_verified=true → refuted (attack with backing)
+  //   - attack_angles >= 1 but evidence_verified=false and tryIndex>=2 → treated as hallucination, unable_to_refute
+  //     (critic is fighting in thin air to create work = avoids false-negative loops)
+  //   - tryIndex=1 and attack_angles=0 → refuted (closes the sycophancy early-out)
+  //   - Otherwise (attack_angles=0 and verify.ok=true and tryIndex>=2) → unable_to_refute
   let finalVerdict: RebuttalOutput["verdict"];
   if (!input.verifyOk) {
     finalVerdict = "refuted";
   } else if (attack_angles.length >= 1 && evidence_verified_precomputed) {
     finalVerdict = "refuted";
   } else if (attack_angles.length >= 1 && input.tryIndex === 1) {
-    // 1 試行目は evidence 弱くても refuted で仕切り直し
+    // On try 1, even with weak evidence, refute and restart
     finalVerdict = "refuted";
   } else if (attack_angles.length >= 1 && !evidence_verified_precomputed) {
-    // 2 試行目以降で evidence が無い攻撃 = 幻覚。無効化して unable_to_refute
+    // From try 2 onward, an attack with no evidence = hallucination. Void it and set unable_to_refute
     finalVerdict = "unable_to_refute";
   } else if (input.tryIndex === 1) {
     finalVerdict = "refuted";
@@ -579,15 +610,15 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
     finalVerdict = "unable_to_refute";
   }
 
-  // Defect 2 (consistency gate): verdict=refuted なのに attack_angles が空かつ
-  // reason にも具体的な fault 指摘が入っていない self-contradictory state を
-  // 矯正する。この状態は「opus が try 1 の暗黙プレッシャに屈して refute 側の
-  // 箱を埋めたが、実際には攻撃対象が無かった」ときに起きる (dogfood 2026-04-24 で確認)。
-  // 顕現した症状: "✗ critic: refuted — The extraction is correct ... verify passes clean"
+  // Defect 2 (consistency gate): coerce the self-contradictory state where verdict=refuted but
+  // attack_angles is empty and reason has no concrete fault accusation either.
+  // This state occurs when "opus caved to the implicit try-1 pressure and filled the refute box
+  // but in reality there was no attack target" (observed in dogfood 2026-04-24).
+  // Symptom that surfaced: "✗ critic: refuted — The extraction is correct ... verify passes clean"
   //
-  // ゲート条件: verify.ok=true かつ attack_angles=0 かつ reason に fault signal 無し。
-  // → finalVerdict を unable_to_refute に下げる (以降の effective* 処理が自動的に
-  //   attack_angles=[] / preempt_hint 中立化 / reason 空化を行う)。
+  // Gate condition: verify.ok=true and attack_angles=0 and reason has no fault signal.
+  // → drop finalVerdict to unable_to_refute (the subsequent effective* handling automatically
+  //   sets attack_angles=[] / neutralizes preempt_hint / empties reason).
   if (
     finalVerdict === "refuted" &&
     input.verifyOk &&
@@ -597,7 +628,7 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
     finalVerdict = "unable_to_refute";
   }
 
-  // preempt_hint を {pattern_name, description} に構造化 (旧形式 string も吸収)
+  // Structure preempt_hint into {pattern_name, description} (also absorbs the old string form for backward compatibility)
   const rawHint = raw?.preempt_hint;
   let pattern_name = "unknown";
   let description = "";
@@ -605,7 +636,7 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
     pattern_name = sanitizePatternName(asString((rawHint as any).pattern_name) || "unknown");
     description = asString((rawHint as any).description);
   } else if (typeof rawHint === "string" && rawHint.trim()) {
-    // 旧形式の 1 行文字列が返ってきた場合は pattern_name 部分を推定
+    // If the old-style 1-line string is returned, infer the pattern_name portion
     const s = rawHint.trim();
     const m = /^([a-z][a-z0-9_]*)\b[\s:\-—]*(.*)$/.exec(s);
     if (m) {
@@ -622,12 +653,12 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
       ? "try 1 must emit at least one attack angle (sycophancy early-out blocked)"
       : "";
 
-  // 幻覚扱いで unable_to_refute に落ちた場合、attack_angles と counter_example も無効化
-  // (orchestrator が次試行の extraContext に渡さないため)
+  // When dropped to unable_to_refute as a hallucination, also void attack_angles and counter_example
+  // (so the orchestrator does not pass them in the next try's extraContext)
   const effectiveAttackAngles =
     finalVerdict === "unable_to_refute" ? [] : attack_angles;
 
-  // insight 抽出を先に行う (preempt_hint の中立化判定で使う)
+  // Extract insight first (used in the preempt_hint neutralization decision)
   const ALLOWED_INSIGHT_KINDS_PRE: InsightKind[] = ["root_cause", "framing", "pattern", "confirmation", "none"];
   const rawInsightPre = raw?.insight;
   let insightKindPre: InsightKind = "none";
@@ -644,8 +675,8 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
     insightContentPre = rawInsightPre.trim();
   }
 
-  // 穴 B: unable_to_refute のとき reason / preempt_hint は原則中立化する
-  // ただし insight=confirmation のときは preempt_hint を残す (Phase 2: 成功パターン辞書の種)
+  // Gap B: when unable_to_refute, neutralize reason / preempt_hint by default
+  // Exception: when insight=confirmation, keep preempt_hint (Phase 2: seed for the success-pattern dictionary)
   const isConfirmationOnSuccess =
     finalVerdict === "unable_to_refute" && insightKindPre === "confirmation" && !!insightContentPre;
   const effectiveReason =
@@ -655,11 +686,11 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
       ? { pattern_name: "", description: "" }
       : { pattern_name, description };
 
-  // Defect 1: verdict ↔ insight の self-contradiction を塞ぐ。
-  // verdict=refuted で insight.kind=confirmation は論理矛盾 ("失敗だ / でも正しい")。
-  // ユーザに見せると critic が壊れているように見えるので、insight を none に落とす。
-  // dogfood で確認された実例: try 1 で comment 修正を refute しつつ
-  // "agent correctly fixed off-by-one errors" を confirmation として併記していた。
+  // Defect 1: close the verdict ↔ insight self-contradiction.
+  // verdict=refuted with insight.kind=confirmation is a logical contradiction ("failed / but correct").
+  // Showing this to the user makes the critic look broken, so we drop insight to none.
+  // Real example observed in dogfood: on try 1, refuted a comment edit while also emitting
+  // "agent correctly fixed off-by-one errors" as a confirmation alongside it.
   let insightKind: InsightKind = insightKindPre;
   let insightContent: string = insightContentPre;
   if (finalVerdict === "refuted" && insightKind === "confirmation") {
@@ -668,7 +699,7 @@ export function parseRebuttal(raw: any, input: RebuttalInput): RebuttalOutput {
   }
   const insight: Insight = { kind: insightKind, content: insightContent };
 
-  // 第 3 軸: scope drift 抽出
+  // Third axis: scope drift extraction
   const scope_drift_detected = raw?.scope_drift_detected === true;
   const scope_question = scope_drift_detected ? asString(raw?.scope_question).trim() : "";
 

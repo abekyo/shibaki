@@ -1,6 +1,6 @@
 # Security
 
-Security model and implementation for Shibaki v0.1.
+Security model and implementation for Shibaki v0.2.
 
 ---
 
@@ -60,7 +60,7 @@ LLM output is validated through multiple layers before declaring completion:
 2. Parser-side rules (evidence_verified gate, attack_angles count)
 3. Orchestrator-side rules (budget / max-tries / timeout)
 4. `--verify` exit code (external truth source)
-5. `--ask` flag (human-in-meta-loop)
+5. `--ask-human` flag (human-in-meta-loop)
 
 ### Secret hygiene
 `.env.local` is in `.gitignore`. Same for the debug log directory `.shibaki/`.
@@ -95,27 +95,26 @@ Recommended workflow:
 
 | ID | Name | Status |
 |---|---|---|
-| LLM01 | Prompt Injection | Out of scope (v0.2 candidate) |
+| LLM01 | Prompt Injection | Out of scope (post-v0.2 candidate) |
 | LLM02 | Insecure Output Handling | Agent's responsibility |
 | LLM03 | Training Data Poisoning | N/A |
-| LLM04 | Model DoS | budget guard partial; output cap in v0.2 |
+| LLM04 | Model DoS | budget guard + 5 MiB stdout/stderr cap |
 | LLM05 | Supply Chain | User responsibility (`bun audit` etc.) |
 | LLM06 | Sensitive Info Disclosure | Critic key isolation + debug log opt-in |
 | LLM07 | Insecure Plugin Design | Shibaki IS the plugin layer |
 | LLM08 | Excessive Agency | Agent CLI permissions are user-managed |
-| LLM09 | Overreliance | Limits openly disclosed in self-verification.md, `--ask` keeps human involved |
+| LLM09 | Overreliance | Limits openly disclosed in self-verification.md, `--ask-human` keeps human involved |
 | LLM10 | Model Theft | N/A |
 
 ---
 
-## Out of scope (v0.2+ candidates)
+## Out of scope (post-v0.2 candidates)
 
-The following are NOT addressed in v0.1:
+The following are NOT addressed in v0.2:
 
 | Item | Description |
 |---|---|
 | Prompt injection defenses | Injection from CLAUDE.md / agent stdout / diff into the critic |
-| Subprocess output cap | agent.stdout accumulates as a string with no size limit |
 | Sandbox / containerization | Agent runs with the same process permissions as Shibaki |
 | Rate limiting | Delegated to the LLM provider |
 
@@ -135,4 +134,5 @@ Things Shibaki does NOT take responsibility for (handle on your side):
 
 ## Changelog
 
+- v0.2 (2026-04-25): 1-hop import expansion with path-traversal guard (rejects `../`, absolute paths, `node_modules`); subprocess stdout/stderr capped at 5 MiB; debug log moved to `~/.shibaki/logs/`; `--ask-human` is the canonical flag (`--ask` kept as alias).
 - v0.1 (2026-04-24): initial release

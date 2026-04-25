@@ -1,4 +1,4 @@
-// CLI 引数 parser (最小)。受理判定のルールは scope.md に従う。
+// CLI argument parser (minimal). Acceptance rules follow scope.md.
 
 export interface RunArgs {
   agent: string;
@@ -8,7 +8,8 @@ export interface RunArgs {
   timeoutSec: number;
   dryRun: boolean;
   debug: boolean;
-  ask: boolean;   // critic が scope drift を検出したら human に 1 行 meta question を問う
+  ask: boolean;   // when critic detects scope drift, ask the human a 1-line meta question
+  quiet: boolean; // suppress non-essential output (spinner / per-try critic dialog) — for CI / scripting
 }
 
 export class ArgError extends Error {
@@ -25,6 +26,7 @@ export function parseRunArgs(argv: string[]): RunArgs {
   let dryRun = false;
   let debug = false;
   let ask = false;
+  let quiet = false;
   const positional: string[] = [];
 
   for (let i = 0; i < argv.length; i++) {
@@ -60,8 +62,15 @@ export function parseRunArgs(argv: string[]): RunArgs {
       case "--debug":
         debug = true;
         break;
+      // --ask-human is the canonical name (makes "who/what is being asked" explicit).
+      // --ask is the legacy name from the 0.1 series, kept as an alias (backward compatibility — don't break existing shell scripts).
+      case "--ask-human":
       case "--ask":
         ask = true;
+        break;
+      case "--quiet":
+      case "-q":
+        quiet = true;
         break;
       default:
         if (a.startsWith("--")) {
@@ -73,29 +82,35 @@ export function parseRunArgs(argv: string[]): RunArgs {
     }
   }
 
-  if (!agent) {
-    throw new ArgError(
-      "--agent is required",
-      "example: --agent \"claude -p\"",
-    );
-  }
-  if (!verify) {
-    throw new ArgError(
-      "--verify is required (tasks with no completion criterion are not accepted)",
-      "use plain claude -p directly. details: docs/scope.md",
-    );
-  }
+  // Don't throw on missing required arguments one-by-one; report them all at once.
+  // Old behavior: "--agent is required" → fix → "--verify is required" → fix → "task is empty"
+  //               (3 round-trips before you know the full form)
+  // New behavior: list every missing argument + a complete example in a single shot.
   const task = positional.join(" ").trim();
-  if (!task) {
-    throw new ArgError("task body is empty");
+  const missing: string[] = [];
+  if (!agent) missing.push("--agent <cmd>          (e.g. \"claude -p\")");
+  if (!verify) missing.push("--verify <cmd>         (e.g. \"bun test tests/\") — required, no exception");
+  if (!task) missing.push("<task> (positional)    (e.g. \"fix the failing test in tests/auth.test.ts\")");
+
+  if (missing.length > 0) {
+    const lines: string[] = ["missing required argument(s):"];
+    for (const m of missing) lines.push(`  • ${m}`);
+    lines.push("");
+    lines.push("example (complete invocation):");
+    lines.push(`  shibaki run --agent "claude -p" --verify "bun test tests/auth.test.ts" "fix the failing test"`);
+    lines.push("");
+    lines.push("for the full reference: shibaki run --help");
+    throw new ArgError(lines.join("\n"));
   }
 
-  return { agent, verify, task, maxTries, timeoutSec, dryRun, debug, ask };
+  // Already threw above when missing.length > 0, so agent/verify are non-undefined here.
+  // TypeScript's narrowing can't follow the missing-array path, so assert explicitly.
+  return { agent: agent!, verify: verify!, task, maxTries, timeoutSec, dryRun, debug, ask, quiet };
 }
 
 const KNOWN_FLAGS = [
   "--agent", "--verify", "--max-tries", "--timeout",
-  "--dry-run", "--debug", "--ask",
+  "--dry-run", "--debug", "--ask-human", "--ask", "--quiet",
 ];
 
 /** Suggest the closest known flag for a typo (Levenshtein distance ≤ 2).

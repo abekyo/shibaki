@@ -5,28 +5,28 @@ import { expect, test, describe } from "bun:test";
 import { runMainAgent, killAllChildren } from "../src/agent/mainAgent.ts";
 
 describe("killAllChildren", () => {
-  test("子がいない状態で呼んでも throw しない (idempotent)", () => {
+  test("does not throw when called with no children (idempotent)", () => {
     expect(() => killAllChildren("SIGTERM")).not.toThrow();
     expect(() => killAllChildren("SIGTERM")).not.toThrow();
   });
 
-  test("実行中の子プロセスは killAllChildren で素早く reap される", async () => {
-    // 60s sleep (本番では claude や bun test に相当する長時間 child) を起動
+  test("a running child process is reaped quickly by killAllChildren", async () => {
+    // Launch a 60s sleep (in production this stands in for a long-running child like claude or bun test)
     const p = runMainAgent({
       agentCmd: "sleep 60",
       task: "x",
       cwd: "/tmp",
-      timeoutMs: 120_000, // sleep より十分長い → 自然 timeout 待ちでは絶対終わらない
+      timeoutMs: 120_000, // far longer than sleep → can never finish via natural timeout
     });
 
-    // child が立ち上がるのを待つ
+    // wait for child to spin up
     await new Promise((r) => setTimeout(r, 200));
 
     const t0 = Date.now();
     killAllChildren("SIGTERM");
 
-    // killAllChildren 後、runMainAgent は速やかに resolve するべき
-    // (signal が child process group まで届いてれば)
+    // After killAllChildren, runMainAgent should resolve promptly
+    // (assuming the signal reaches the child process group)
     const result = await Promise.race([
       p,
       new Promise((_, reject) =>
@@ -35,14 +35,14 @@ describe("killAllChildren", () => {
     ]);
     const elapsed = Date.now() - t0;
 
-    // sleep 60 が 3 秒以内に resolve した = kill が効いた。
-    // (node spawn は signal 死だと close の code=null → exitCode 0 になるので
-    //  exitCode 自体は判定材料にならない。時間で判定する)
+    // sleep 60 resolved within 3s = kill worked.
+    // (node spawn maps signal death to close code=null → exitCode 0, so
+    //  exitCode is not a useful signal. We judge by elapsed time.)
     expect(elapsed).toBeLessThan(3000);
     expect(result).toBeDefined();
   }, 15_000);
 
-  test("複数の並行 child を 1 回の killAllChildren で全部殺せる", async () => {
+  test("a single killAllChildren kills multiple concurrent children", async () => {
     const p1 = runMainAgent({ agentCmd: "sleep 60", task: "x", cwd: "/tmp", timeoutMs: 120_000 });
     const p2 = runMainAgent({ agentCmd: "sleep 60", task: "x", cwd: "/tmp", timeoutMs: 120_000 });
 

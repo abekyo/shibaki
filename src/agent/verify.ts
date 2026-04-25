@@ -1,9 +1,9 @@
-// --verify コマンドを実行して exit code + stdout/stderr を回収する。
-// exit 0 が完遂の必要条件 (十分条件は rebuttal が反証不能)。
+// Run the --verify command and collect exit code + stdout/stderr.
+// exit 0 is a necessary condition for completion (the sufficient condition is that the rebuttal is irrefutable).
 import { execCapture } from "./mainAgent.ts";
 
 export interface VerifyResult {
-  ok: boolean;           // exit code 0 なら true
+  ok: boolean;           // true if exit code is 0
   exitCode: number;
   stdout: string;
   stderr: string;

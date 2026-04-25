@@ -1,10 +1,10 @@
-// Anthropic provider は response_format 非対応のため、jsonMode=true のときは
-// system prompt 末尾に JSON 強制指示を append することで代替する (穴 6)。
-// この契約が壊れないことを lock する。
+// The Anthropic provider does not support response_format, so when jsonMode=true
+// we substitute by appending a JSON-forcing instruction to the end of the system
+// prompt (Gap 6). This locks in the contract.
 import { expect, test, describe } from "bun:test";
 import type { CallOptions } from "../src/llm/types.ts";
 
-// Anthropic SDK を mock して system prompt を覗く
+// Mock the Anthropic SDK to peek at the system prompt
 const captured: { system?: string } = {};
 
 import { mock } from "bun:test";
@@ -26,8 +26,8 @@ mock.module("@anthropic-ai/sdk", () => {
 
 const { anthropicProvider } = await import("../src/llm/providers/anthropic.ts");
 
-describe("anthropic provider — jsonMode (穴 6)", () => {
-  test("jsonMode=false は system をそのまま渡す", async () => {
+describe("anthropic provider — jsonMode (Gap 6)", () => {
+  test("jsonMode=false passes system through unchanged", async () => {
     const opts: CallOptions = {
       model: "claude-sonnet-4-6",
       system: "You are helpful.",
@@ -38,7 +38,7 @@ describe("anthropic provider — jsonMode (穴 6)", () => {
     expect(captured.system).toBe("You are helpful.");
   });
 
-  test("jsonMode=true は system 末尾に JSON 強制指示が append される", async () => {
+  test("jsonMode=true appends a JSON-forcing instruction to system", async () => {
     const opts: CallOptions = {
       model: "claude-sonnet-4-6",
       system: "You are helpful.",

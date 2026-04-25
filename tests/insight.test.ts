@@ -1,4 +1,4 @@
-// insight フィールド (モード B: 気づき) のテスト
+// Tests for the insight field (mode B: insights)
 import { expect, test, describe } from "bun:test";
 import { parseRebuttal, type RebuttalInput } from "../src/critic/rebuttal.ts";
 
@@ -18,8 +18,8 @@ function input(overrides: Partial<RebuttalInput> = {}): RebuttalInput {
   };
 }
 
-describe("insight (モード B: 気づき)", () => {
-  test("refuted 時の root_cause insight は保持", () => {
+describe("insight (mode B: insights)", () => {
+  test("root_cause insight is kept when refuted", () => {
     const r = parseRebuttal(
       {
         attack_angles: ["x"],
@@ -35,7 +35,7 @@ describe("insight (モード B: 気づき)", () => {
     expect(r.insight.content).toContain("境界値定義");
   });
 
-  test("unable_to_refute 時の confirmation insight も保持される (正しい時の肯定)", () => {
+  test("confirmation insight is also kept when unable_to_refute (positive when correct)", () => {
     const r = parseRebuttal(
       {
         attack_angles: [],
@@ -51,7 +51,7 @@ describe("insight (モード B: 気づき)", () => {
     expect(r.insight.content).toContain("正しい");
   });
 
-  test("insight.kind が不正値なら none に落とす", () => {
+  test("invalid insight.kind falls back to none", () => {
     const r = parseRebuttal(
       {
         attack_angles: [],
@@ -63,13 +63,13 @@ describe("insight (モード B: 気づき)", () => {
     expect(r.insight.content).toBe("何か");
   });
 
-  test("insight が欠落なら kind=none, content=''", () => {
+  test("missing insight → kind=none, content=''", () => {
     const r = parseRebuttal({ attack_angles: [] }, input({ tryIndex: 3 }));
     expect(r.insight.kind).toBe("none");
     expect(r.insight.content).toBe("");
   });
 
-  test("旧形式 string は content として吸収 (kind=none)", () => {
+  test("legacy string form is absorbed as content (kind=none)", () => {
     const r = parseRebuttal(
       { attack_angles: [], insight: "ループ不変条件を先に書けばこのバグは消える" },
       input({ tryIndex: 3 }),
@@ -78,7 +78,7 @@ describe("insight (モード B: 気づき)", () => {
     expect(r.insight.content).toContain("ループ不変条件");
   });
 
-  test("content が空のときは kind も none に強制", () => {
+  test("empty content forces kind to none", () => {
     const r = parseRebuttal(
       { attack_angles: [], insight: { kind: "pattern", content: "" } },
       input({ tryIndex: 3 }),

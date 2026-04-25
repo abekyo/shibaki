@@ -1,10 +1,10 @@
-// ループ予算の3軸 (試行回数 / 時間 / コスト概算) を管理する。
-// 超過したら即 escalate。
+// Manage the loop's 3-axis budget (try count / time / estimated cost).
+// On any breach, escalate immediately.
 
 export interface BudgetConfig {
   maxTries: number;
   timeoutMs: number;
-  maxCostUsd?: number; // 未指定なら制限しない (Phase 1)
+  maxCostUsd?: number; // unset = no limit (Phase 1)
 }
 
 export interface BudgetState {

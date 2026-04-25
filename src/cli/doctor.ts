@@ -32,8 +32,8 @@ export async function cmdDoctor(argv: string[]): Promise<number> {
   process.stdout.write("Shibaki doctor — environment diagnostic\n");
   process.stdout.write("==========================================\n\n");
 
-  // Auto-fallback を先に評価: key 無し + claude あり なら LLM_PROVIDER_CRITICAL を
-  // anthropic-cli に書き換えた上で以降の check を進める。
+  // Evaluate auto-fallback first: if no key + claude is present, rewrite LLM_PROVIDER_CRITICAL
+  // to anthropic-cli and proceed with the remaining checks.
   const fallback = await autoSelectCritic(process.env);
 
   const checks: CheckResult[] = [];
@@ -134,8 +134,8 @@ const KEY_HINT_URL: Record<"anthropic" | "openai" | "gemini", string> = {
 };
 
 
-/** CLI provider は API key の代わりに bin が PATH 上にあるかを確認。
- *  API provider は従来通り key check。 */
+/** For CLI providers, check that the bin is on PATH instead of an API key.
+ *  API providers fall through to the usual key check. */
 async function checkCriticBackend(): Promise<CheckResult> {
   const provider = detectCriticProvider();
   if (isCliProvider(provider)) {
@@ -158,10 +158,9 @@ async function checkCliProvider(
       hint: info.install,
     };
   }
-  // Smoke: --version を 5 秒 timeout で叩いて、bin が実際に起動可能か確認。
-  // これで「npm install は成功してるが node バージョン問題で exec 失敗」
-  // みたいな壊れた install を早期検知できる。login 状態までは検証しない
-  // (それは run 時に初めて分かる — API 呼ぶまで login は assert しない)。
+  // Smoke: invoke --version with a 5s timeout to confirm the bin actually launches.
+  // This catches broken installs like "npm install succeeded but exec fails due to node version mismatch".
+  // Doesn't verify login state (that's only known at run time — don't assert login until an API call is made).
   const smoke = await execCapture(bin, ["--version"], undefined, 5000);
   if (smoke.exitCode !== 0) {
     return {

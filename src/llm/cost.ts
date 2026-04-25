@@ -1,5 +1,5 @@
-// コスト見積もりのみ (Phase 1 は DB 永続化しない、ループ中の累計だけメモリで)
-// 価格は 2026-01 時点の概算、正確な billing は provider dashboard 参照
+// Cost estimation only (Phase 1 does not persist to a DB; loop-running totals are in-memory).
+// Prices are approximate as of 2026-01; for accurate billing see the provider dashboard.
 
 const PRICING: Record<string, { input: number; output: number }> = {
   // Anthropic

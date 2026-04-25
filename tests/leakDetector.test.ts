@@ -20,50 +20,50 @@ async function setupRepo(tmp: string): Promise<void> {
 }
 
 describe("SECRET_PATTERNS regex", () => {
-  test("OpenAI sk-proj key を検出", () => {
+  test("detects OpenAI sk-proj key", () => {
     const p = SECRET_PATTERNS.find((x) => x.id === "openai_api_key")!;
     expect("sk-proj-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".match(p.regex)).not.toBeNull();
   });
-  test("Anthropic sk-ant key を検出", () => {
+  test("detects Anthropic sk-ant key", () => {
     const p = SECRET_PATTERNS.find((x) => x.id === "anthropic_api_key")!;
     expect("sk-ant-bbbbbbbbbbbbbbbbbbbb".match(p.regex)).not.toBeNull();
   });
-  test("Google AIza key を検出", () => {
+  test("detects Google AIza key", () => {
     const p = SECRET_PATTERNS.find((x) => x.id === "google_api_key")!;
     expect("AIzaCccccccccccccccccccccccccccccccccccc".match(p.regex)).not.toBeNull();
   });
-  test("GitHub PAT (ghp_) を検出", () => {
+  test("detects GitHub PAT (ghp_)", () => {
     const p = SECRET_PATTERNS.find((x) => x.id === "github_pat")!;
     expect("ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".match(p.regex)).not.toBeNull();
   });
-  test("AWS AKIA を検出", () => {
+  test("detects AWS AKIA", () => {
     const p = SECRET_PATTERNS.find((x) => x.id === "aws_access_key")!;
     expect("AKIAIOSFODNN7EXAMPLE".match(p.regex)).not.toBeNull();
   });
 });
 
 describe("isTestOrDocsPath", () => {
-  test("tests/ / docs/ はマッチ", () => {
+  test("tests/ / docs/ match", () => {
     expect(isTestOrDocsPath("tests/foo.ts")).toBe(true);
     expect(isTestOrDocsPath("docs/x.md")).toBe(true);
     expect(isTestOrDocsPath("examples/y.ts")).toBe(true);
   });
-  test(".test.ts / .spec.js もマッチ", () => {
+  test(".test.ts / .spec.js also match", () => {
     expect(isTestOrDocsPath("src/foo.test.ts")).toBe(true);
     expect(isTestOrDocsPath("src/bar.spec.js")).toBe(true);
   });
-  test("README / SECURITY / CHANGELOG もマッチ", () => {
+  test("README / SECURITY / CHANGELOG also match", () => {
     expect(isTestOrDocsPath("README.md")).toBe(true);
     expect(isTestOrDocsPath("SECURITY.md")).toBe(true);
   });
-  test("普通の src/ ファイルはマッチしない", () => {
+  test("regular src/ files do not match", () => {
     expect(isTestOrDocsPath("src/foo.ts")).toBe(false);
     expect(isTestOrDocsPath("bin/cli.ts")).toBe(false);
   });
 });
 
 describe("auditDirectory — secret detection", () => {
-  test("clean repo は ok=true", async () => {
+  test("clean repo → ok=true", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await writeFile(join(tmp, "README.md"), "# clean\nNo secrets here.\n");
@@ -75,7 +75,7 @@ describe("auditDirectory — secret detection", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("OpenAI key を含むソースを検出", async () => {
+  test("detects source containing OpenAI key", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await writeFile(
@@ -90,7 +90,7 @@ describe("auditDirectory — secret detection", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("custom 禁止語を検出", async () => {
+  test("detects custom forbidden words", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await mkdir(join(tmp, ".shibaki"), { recursive: true });
@@ -104,7 +104,7 @@ describe("auditDirectory — secret detection", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("commit message の禁止語を検出", async () => {
+  test("detects forbidden words in commit message", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await mkdir(join(tmp, ".shibaki"), { recursive: true });
@@ -128,7 +128,7 @@ describe("auditDirectory — secret detection", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("commit author の禁止語を検出", async () => {
+  test("detects forbidden words in commit author", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await mkdir(join(tmp, ".shibaki"), { recursive: true });
@@ -152,7 +152,7 @@ describe("auditDirectory — secret detection", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("test ファイル内の dummy key (sk-ant-xxx) は除外", async () => {
+  test("dummy keys (sk-ant-xxx) inside test files are excluded", async () => {
     const tmp = newTmp();
     await setupRepo(tmp);
     await mkdir(join(tmp, "tests"), { recursive: true });
@@ -160,7 +160,7 @@ describe("auditDirectory — secret detection", () => {
     git(tmp, "add", ".");
     git(tmp, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "test add");
     const r = await auditDirectory({ cwd: tmp });
-    // looksLikeDummy で除外されるはず
+    // should be excluded by looksLikeDummy
     expect(r.leaks.filter((l) => l.kind === "secret").length).toBe(0);
     await rm(tmp, { recursive: true, force: true });
   });

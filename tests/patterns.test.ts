@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 describe("patterns load/save round trip", () => {
-  test("空ファイル → []", async () => {
+  test("empty file → []", async () => {
     const tmp = join(tmpdir(), `shibaki-p-${Date.now()}`);
     const path = join(tmp, "patterns.md");
     await mkdir(tmp, { recursive: true });
@@ -21,11 +21,11 @@ describe("patterns load/save round trip", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("存在しないファイル → []", async () => {
+  test("non-existent file → []", async () => {
     expect(await loadPatterns("/tmp/no-such-file.md")).toEqual([]);
   });
 
-  test("save → load で round trip", async () => {
+  test("save → load round trip", async () => {
     const tmp = join(tmpdir(), `shibaki-p-${Date.now()}`);
     const path = join(tmp, "patterns.md");
     const patterns: Pattern[] = [
@@ -43,7 +43,7 @@ describe("patterns load/save round trip", () => {
 });
 
 describe("mergeObservation", () => {
-  test("既存 pattern と同名 → hits++ + last_seen 更新", () => {
+  test("same name as existing pattern → hits++ + last_seen updated", () => {
     const existing: Pattern[] = [
       { type: "failure", pattern_name: "ts_ignore_cover", description: "old desc", hits: 2, last_seen: "2026-04-20" },
     ];
@@ -58,7 +58,7 @@ describe("mergeObservation", () => {
     expect(merged[0].description).toBe("new desc longer than old desc");
   });
 
-  test("type 違いは別 entry として扱う", () => {
+  test("different type is treated as a separate entry", () => {
     const existing: Pattern[] = [
       { type: "failure", pattern_name: "boundary_check", description: "f", hits: 1, last_seen: "2026-04-20" },
     ];
@@ -70,7 +70,7 @@ describe("mergeObservation", () => {
     expect(merged).toHaveLength(2);
   });
 
-  test("新規 pattern → 追加", () => {
+  test("new pattern → added", () => {
     const merged = mergeObservation([], {
       type: "failure",
       pattern_name: "new_one",
@@ -80,14 +80,14 @@ describe("mergeObservation", () => {
     expect(merged[0].hits).toBe(1);
   });
 
-  test("空 pattern_name は無視", () => {
+  test("empty pattern_name is ignored", () => {
     const merged = mergeObservation([], { type: "failure", pattern_name: "", description: "x" });
     expect(merged).toHaveLength(0);
   });
 });
 
 describe("prunePatterns", () => {
-  test("文字数上限内なら全件残す", () => {
+  test("keeps all when within character limit", () => {
     const ps: Pattern[] = [
       { type: "failure", pattern_name: "a", description: "d", hits: 1, last_seen: "2026-04-24" },
       { type: "failure", pattern_name: "b", description: "d", hits: 1, last_seen: "2026-04-24" },
@@ -95,7 +95,7 @@ describe("prunePatterns", () => {
     expect(prunePatterns(ps, 10000)).toHaveLength(2);
   });
 
-  test("文字数上限を超えたら hits 多い順で残す", () => {
+  test("over the character limit, keeps highest-hits first", () => {
     const ps: Pattern[] = [
       { type: "failure", pattern_name: "rare", description: "d", hits: 1, last_seen: "2026-04-24" },
       { type: "failure", pattern_name: "common", description: "d", hits: 100, last_seen: "2026-04-24" },
@@ -106,11 +106,11 @@ describe("prunePatterns", () => {
 });
 
 describe("buildPatternsSnapshot", () => {
-  test("空 → 空文字 (system prompt に何も足さない)", () => {
+  test("empty → empty string (no addition to system prompt)", () => {
     expect(buildPatternsSnapshot([])).toBe("");
   });
 
-  test("failure と success が両方ある → 2 セクション分ける", () => {
+  test("failure and success both present → split into 2 sections", () => {
     const ps: Pattern[] = [
       { type: "failure", pattern_name: "skip_test_cheat", description: "test を skip", hits: 2, last_seen: "2026-04-24" },
       { type: "success", pattern_name: "boundary_invariant", description: "境界条件を先に", hits: 1, last_seen: "2026-04-24" },
@@ -123,7 +123,7 @@ describe("buildPatternsSnapshot", () => {
     expect(s).toContain("hits=2");
   });
 
-  test("failure のみ → success セクションを出さない", () => {
+  test("failure only → no success section", () => {
     const ps: Pattern[] = [
       { type: "failure", pattern_name: "x", description: "d", hits: 1, last_seen: "2026-04-24" },
     ];

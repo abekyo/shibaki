@@ -1,12 +1,12 @@
-// LLM プロバイダ抽象化の型
+// LLM provider abstraction types.
 //
-// provider 区分:
-//  - API 系: "anthropic" | "openai" | "gemini" — HTTP API + API key で呼ぶ
-//  - CLI 系: "anthropic-cli" | "gemini-cli" | "codex-cli"
-//             — ローカル CLI を subprocess spawn して呼ぶ (API key 不要、ユーザーの CLI 認証に依存)
+// Provider categories:
+//  - API providers: "anthropic" | "openai" | "gemini" — called via HTTP API + API key
+//  - CLI providers: "anthropic-cli" | "gemini-cli" | "codex-cli"
+//                  — call a local CLI via subprocess spawn (no API key; relies on the user's CLI auth)
 //
-// CLI 系は Claude Code plan / Gemini Code Assist / Codex plan 等、サブスク契約ユーザーが
-// API 契約を別途取らずに critic を動かせる経路を提供する。
+// The CLI providers offer a path for subscription users (Claude Code plan / Gemini Code Assist /
+// Codex plan etc.) to run the critic without taking out a separate API contract.
 export type ProviderName =
   | "anthropic"
   | "openai"
@@ -27,9 +27,9 @@ export function isCliProvider(p: ProviderName): boolean {
   return p === "anthropic-cli" || p === "gemini-cli" || p === "codex-cli";
 }
 
-// CRITICAL = critic (反証役) 専用。別プロバイダ強制推奨
-// MAIN     = main agent を Shibaki 側から直接叩く場合の tier (Phase 1 では未使用 = 外部 CLI spawn)
-// LIGHT    = メタ分析 / ログ分類など補助 (Phase 2+)
+// CRITICAL = critic (rebuttal role) only. Recommended to force a different provider
+// MAIN     = tier for when Shibaki calls the main agent directly (unused in Phase 1 = external CLI spawn)
+// LIGHT    = auxiliary tasks like meta analysis / log classification (Phase 2+)
 export type Tier = "CRITICAL" | "MAIN" | "LIGHT";
 
 export interface CallOptions {

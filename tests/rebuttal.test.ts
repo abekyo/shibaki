@@ -1,5 +1,5 @@
-// parseRebuttal の契約テスト。
-// critic プロンプト設計の「辛辣さ + 検証可能性」を担保する 5 修正を固定する。
+// Contract tests for parseRebuttal.
+// Locks in the 5 fixes that ensure the critic prompt design's "sharpness + verifiability".
 import { expect, test, describe } from "bun:test";
 import { parseRebuttal, type RebuttalInput } from "../src/critic/rebuttal.ts";
 
@@ -19,8 +19,8 @@ function input(overrides: Partial<RebuttalInput> = {}): RebuttalInput {
   };
 }
 
-describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
-  test("attack_angles が 1 本以上 + evidence 検証 OK → refuted", () => {
+describe("parseRebuttal — mechanical verdict rules (Gap 4)", () => {
+  test("attack_angles >= 1 with verified evidence → refuted", () => {
     const r = parseRebuttal(
       {
         verdict: "unable_to_refute",
@@ -32,7 +32,7 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
     expect(r.verdict).toBe("refuted");
   });
 
-  test("attack_angles 有り + evidence 検証 NG + tryIndex>=2 → unable_to_refute (幻覚抑止)", () => {
+  test("attack_angles present + evidence not verified + tryIndex>=2 → unable_to_refute (suppress hallucination)", () => {
     const r = parseRebuttal(
       {
         verdict: "refuted",
@@ -45,7 +45,7 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
     expect(r.attack_angles).toEqual([]);
   });
 
-  test("tryIndex=1 なら evidence 無くても refuted (1 試行目は仕切り直し)", () => {
+  test("tryIndex=1: refuted even without evidence (try 1 is a clean restart)", () => {
     const r = parseRebuttal(
       { attack_angles: ["浅くても出す"], evidence: "" },
       input({ tryIndex: 1 }),
@@ -53,7 +53,7 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
     expect(r.verdict).toBe("refuted");
   });
 
-  test("attack_angles=0 かつ verify.ok かつ tryIndex>=2 → unable_to_refute", () => {
+  test("attack_angles=0 + verify.ok + tryIndex>=2 → unable_to_refute", () => {
     const r = parseRebuttal(
       { verdict: "unable_to_refute", attack_angles: [] },
       input({ tryIndex: 2 }),
@@ -61,7 +61,7 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
     expect(r.verdict).toBe("unable_to_refute");
   });
 
-  test("verify.ok=false は verdict 問わず refuted 固定", () => {
+  test("verify.ok=false forces refuted regardless of verdict", () => {
     const r = parseRebuttal(
       { verdict: "unable_to_refute", attack_angles: [] },
       input({ verifyOk: false, verifyExitCode: 1, tryIndex: 5 }),
@@ -70,12 +70,12 @@ describe("parseRebuttal — 機械的判定ルール (穴 4)", () => {
   });
 });
 
-describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1, Defect 2 gate と併走)", () => {
-  // 穴 1 の原意: tryIndex=1 で opus が早々に unable_to_refute を返すのを塞ぐ。
-  // Defect 2 の consistency gate 導入後、「reason に具体的な fault 指摘がある」なら
-  // 引き続き refute 強制。逆に「reason が空 / positive」なら gate が
-  // unable_to_refute に矯正する (中身の無い refute は出さない)。
-  test("tryIndex=1 + attack_angles=0 + reason に fault signal → refuted 強制 (穴 1)", () => {
+describe("parseRebuttal — try 1 unable_to_refute forbidden (Gap 1, runs alongside Defect 2 gate)", () => {
+  // Gap 1 intent: prevent opus from returning unable_to_refute too early at tryIndex=1.
+  // After Defect 2's consistency gate, "reason contains a concrete fault" still forces
+  // refute. Conversely, "reason is empty / positive" triggers the gate to coerce to
+  // unable_to_refute (so we don't emit empty-shell refutes).
+  test("tryIndex=1 + attack_angles=0 + reason has fault signal → forced refuted (Gap 1)", () => {
     const r = parseRebuttal(
       {
         verdict: "unable_to_refute",
@@ -87,7 +87,7 @@ describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1, Defect 2
     expect(r.verdict).toBe("refuted");
   });
 
-  test("tryIndex=1 + attack_angles=0 + reason 空/positive → Defect 2 gate が unable_to_refute に矯正", () => {
+  test("tryIndex=1 + attack_angles=0 + reason empty/positive → Defect 2 gate coerces to unable_to_refute", () => {
     const r = parseRebuttal(
       { verdict: "unable_to_refute", attack_angles: [] },
       input({ tryIndex: 1 }),
@@ -95,7 +95,7 @@ describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1, Defect 2
     expect(r.verdict).toBe("unable_to_refute");
   });
 
-  test("tryIndex=2 以降は attack_angles=0 なら unable_to_refute 通す", () => {
+  test("tryIndex>=2 with attack_angles=0 passes through as unable_to_refute", () => {
     const r = parseRebuttal(
       { verdict: "unable_to_refute", attack_angles: [] },
       input({ tryIndex: 2 }),
@@ -104,8 +104,8 @@ describe("parseRebuttal — 1 試行目 unable_to_refute 禁止 (穴 1, Defect 2
   });
 });
 
-describe("parseRebuttal — kind enum (穴 5)", () => {
-  test("code_inspection は削除済、none に落とす", () => {
+describe("parseRebuttal — kind enum (Gap 5)", () => {
+  test("code_inspection is removed, falls back to none", () => {
     const r = parseRebuttal(
       {
         verdict: "refuted",
@@ -117,7 +117,7 @@ describe("parseRebuttal — kind enum (穴 5)", () => {
     expect(r.counter_example.kind).toBe("none");
   });
 
-  test("failing_test / input_case / verify_bypass は許可 (refuted かつ evidence 検証 OK)", () => {
+  test("failing_test / input_case / verify_bypass are allowed (refuted with verified evidence)", () => {
     for (const k of ["failing_test", "input_case", "verify_bypass"] as const) {
       const r = parseRebuttal(
         {
@@ -133,7 +133,7 @@ describe("parseRebuttal — kind enum (穴 5)", () => {
     }
   });
 
-  test("none は attack_angles 0 本のときのみ (unable_to_refute 時)", () => {
+  test("none only when attack_angles is empty (unable_to_refute case)", () => {
     const r = parseRebuttal(
       { attack_angles: [], counter_example: { kind: "none", content: "" } },
       input({ tryIndex: 3 }),
@@ -141,7 +141,7 @@ describe("parseRebuttal — kind enum (穴 5)", () => {
     expect(r.counter_example.kind).toBe("none");
   });
 
-  test("unable_to_refute のとき kind は none に強制 (矛盾排除)", () => {
+  test("when unable_to_refute, kind is forced to none (contradiction removal)", () => {
     const r = parseRebuttal(
       {
         verdict: "unable_to_refute",
@@ -155,16 +155,16 @@ describe("parseRebuttal — kind enum (穴 5)", () => {
   });
 });
 
-describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
-  // preempt_hint は refuted 時にのみ残る (穴 B: unable_to_refute 時は中立化)
-  // なので以下のテストは evidence 検証 OK の状況 (= refuted で定着) を用意する
+describe("parseRebuttal — preempt_hint structuring (Gap 8)", () => {
+  // preempt_hint is kept only when refuted (Gap B: neutralized when unable_to_refute).
+  // So the following tests set up a verified-evidence scenario (= sticks as refuted).
   const refutedCtx = {
     tryIndex: 2,
     verifyStderr: "FAIL\n  AssertionError at line 99",
   } satisfies Partial<RebuttalInput>;
   const refutedEvidence = { evidence: "AssertionError at line 99" };
 
-  test("object 形式は pattern_name/description をそのまま受ける", () => {
+  test("object form passes through pattern_name/description as-is", () => {
     const r = parseRebuttal(
       {
         attack_angles: ["x"],
@@ -178,7 +178,7 @@ describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
     expect(r.preempt_hint.description).toBe("mock で挙動回避");
   });
 
-  test("snake_case でない pattern_name は強制変換", () => {
+  test("non-snake_case pattern_name is coerced", () => {
     const r = parseRebuttal(
       {
         attack_angles: ["x"],
@@ -190,7 +190,7 @@ describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
     expect(r.preempt_hint.pattern_name).toBe("silent_mock_bypass");
   });
 
-  test("旧形式 string でも破綻しない (先頭 snake_case 抽出)", () => {
+  test("legacy string form does not break (extract leading snake_case)", () => {
     const r = parseRebuttal(
       { attack_angles: ["x"], ...refutedEvidence, preempt_hint: "ts_ignore_cover: @ts-ignore で隠した" },
       input(refutedCtx),
@@ -199,7 +199,7 @@ describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
     expect(r.preempt_hint.description).toContain("@ts-ignore");
   });
 
-  test("欠落時は pattern_name='unknown' (refuted で preempt_hint が残るとき)", () => {
+  test("missing pattern_name defaults to 'unknown' (when preempt_hint survives via refuted)", () => {
     const r = parseRebuttal(
       { attack_angles: ["x"], ...refutedEvidence },
       input(refutedCtx),
@@ -207,7 +207,7 @@ describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
     expect(r.preempt_hint.pattern_name).toBe("unknown");
   });
 
-  test("unable_to_refute のときは preempt_hint が中立化される (穴 B)", () => {
+  test("when unable_to_refute, preempt_hint is neutralized (Gap B)", () => {
     const r = parseRebuttal(
       {
         attack_angles: [],
@@ -222,8 +222,8 @@ describe("parseRebuttal — preempt_hint 構造化 (穴 8)", () => {
   });
 });
 
-describe("parseRebuttal — attack_angles の上限", () => {
-  test("最大 3 本でクランプ (evidence 検証済なら refuted で保持)", () => {
+describe("parseRebuttal — attack_angles cap", () => {
+  test("clamps at max 3 (kept as refuted when evidence is verified)", () => {
     const r = parseRebuttal(
       {
         attack_angles: ["a", "b", "c", "d", "e"],
@@ -237,10 +237,10 @@ describe("parseRebuttal — attack_angles の上限", () => {
 });
 
 describe("parseRebuttal — Defect 1: verdict/insight self-contradiction gate", () => {
-  test("verdict=refuted + insight.kind=confirmation は insight を none に demote", () => {
-    // dogfood で観測した実例: critic が comment 修正を refute しつつ
-    // "agent correctly fixed off-by-one errors" を confirmation として併記した。
-    // gate が発火して insight が剥がれる挙動を固定する。
+  test("verdict=refuted + insight.kind=confirmation demotes insight to none", () => {
+    // Real case observed in dogfood: critic refuted a comment fix yet listed
+    // "agent correctly fixed off-by-one errors" as confirmation alongside.
+    // Locks in the gate-firing behavior that strips the insight.
     const r = parseRebuttal(
       {
         attack_angles: ["unauthorized_modification"],
@@ -252,7 +252,7 @@ describe("parseRebuttal — Defect 1: verdict/insight self-contradiction gate", 
       },
       input({
         verifyStderr: "dogfood/mathTarget.ts:L1-L2\nsome cited diff",
-        tryIndex: 1, // try 1 で attack_angles 有り → refuted
+        tryIndex: 1, // try 1 with attack_angles → refuted
       }),
     );
     expect(r.verdict).toBe("refuted");
@@ -260,7 +260,7 @@ describe("parseRebuttal — Defect 1: verdict/insight self-contradiction gate", 
     expect(r.insight.content).toBe("");
   });
 
-  test("verdict=refuted + insight.kind=root_cause は demote しない (矛盾してないので保持)", () => {
+  test("verdict=refuted + insight.kind=root_cause is not demoted (no contradiction → keep)", () => {
     const r = parseRebuttal(
       {
         attack_angles: ["a"],
@@ -274,7 +274,7 @@ describe("parseRebuttal — Defect 1: verdict/insight self-contradiction gate", 
     expect(r.insight.content).toBe("agent only fixed the symptom");
   });
 
-  test("verdict=unable_to_refute + insight.kind=confirmation は保持 (健全な組み合わせ)", () => {
+  test("verdict=unable_to_refute + insight.kind=confirmation is kept (healthy combo)", () => {
     const r = parseRebuttal(
       {
         attack_angles: [],
