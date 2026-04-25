@@ -87,6 +87,16 @@ Environment:
                                    Only set if your agent CLI legitimately
                                    needs the same provider as the critic.
 
+Output (machine-parseable; locked by tests/finalLineFormat.test.ts):
+  Final line is one of:
+    ✓ done   (<time> / <N> tries / $<cost>)
+    ✗ failed (<time> / <N> tries / <reason>)
+  where <time> = "<N>s" or "<M>m<N>s"
+        <reason> = "max tries hit" | "timeout" | "cost cap hit"
+  Single regex for both:
+    ^(✓ done|✗ failed) \(([^/]+) \/ (\d+) tries \/ (.+)\)$
+  Combine with --quiet to get just this line on stderr (no per-try dialog).
+
 Accepted tasks (Tier 1):
   - Make failing tests pass     (--verify "bun test ...")
   - Eliminate type errors        (--verify "tsc --noEmit")

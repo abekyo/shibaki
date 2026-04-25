@@ -504,11 +504,41 @@ function phaseTicker(
   };
 }
 
-function success(tries: number, elapsedSec: number, costUsd: number, insight?: string): void {
+// ─── Stable final-line contract (semi-structured output) ──────────────────────
+// Format (locked, do NOT break without bumping major version):
+//
+//   Success: ✓ done (<time> / <tries> tries / $<cost>)
+//   Failure: ✗ failed (<time> / <tries> tries / <reason>)
+//
+// where:
+//   <time>   = "<N>s" or "<M>m<N>s"
+//   <tries>  = positive integer
+//   <cost>   = "0.000" through "9999.999" (3 decimals; "0.000" in Plan mode)
+//   <reason> = "max tries hit" | "timeout" | "cost cap hit"
+//
+// Locked by tests/finalLineFormat.test.ts via regex. Documented as
+// machine-parseable in `shibaki run --help` (LONG help).
+//
+// Field order is intentional: time / tries / extra. Both lines share this
+// shape so a single regex can capture either:
+//   /^(✓ done|✗ failed) \(([^/]+) \/ (\d+) tries \/ (.+)\)$/
+
+function formatTime(elapsedSec: number): string {
   const mins = Math.floor(elapsedSec / 60);
   const secs = elapsedSec % 60;
-  const time = mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
-  process.stderr.write(`✓ done (${time} / ${tries} tries / $${costUsd.toFixed(3)})\n`);
+  return mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
+}
+
+export function formatSuccessLine(tries: number, elapsedSec: number, costUsd: number): string {
+  return `✓ done (${formatTime(elapsedSec)} / ${tries} tries / $${costUsd.toFixed(3)})`;
+}
+
+export function formatFailureLine(tries: number, elapsedSec: number, reason: string): string {
+  return `✗ failed (${formatTime(elapsedSec)} / ${tries} tries / ${reason})`;
+}
+
+function success(tries: number, elapsedSec: number, costUsd: number, insight?: string): void {
+  process.stderr.write(formatSuccessLine(tries, elapsedSec, costUsd) + "\n");
   if (insight) {
     process.stderr.write(`  why: ${insight}\n`);
   }
@@ -531,12 +561,9 @@ async function persistObservedPatterns(
 }
 
 function escalate(tries: number, elapsedSec: number, breach: string, pattern: string): void {
-  const mins = Math.floor(elapsedSec / 60);
-  const secs = elapsedSec % 60;
-  const time = mins > 0 ? `${mins}m${secs}s` : `${secs}s`;
-  const breachLabel =
+  const reason =
     breach === "tries" ? "max tries hit" : breach === "timeout" ? "timeout" : "cost cap hit";
-  process.stderr.write(`✗ failed (${tries} tries / ${time} / ${breachLabel})\n`);
+  process.stderr.write(formatFailureLine(tries, elapsedSec, reason) + "\n");
   process.stderr.write(`  stuck pattern: ${pattern}\n`);
   process.stderr.write(`  recommendation: review manually\n`);
 }
