@@ -6,33 +6,33 @@ import {
 } from "../src/agent/secretIsolation.ts";
 
 describe("detectCriticProvider", () => {
-  test("LLM_PROVIDER_CRITICAL が明示されてればそれを返す", () => {
+  test("returns LLM_PROVIDER_CRITICAL if explicitly set", () => {
     expect(detectCriticProvider({ LLM_PROVIDER_CRITICAL: "openai" })).toBe("openai");
     expect(detectCriticProvider({ LLM_PROVIDER_CRITICAL: "gemini" })).toBe("gemini");
   });
 
-  test("default: main=anthropic なら critic=openai", () => {
+  test("default: main=anthropic → critic=openai", () => {
     expect(detectCriticProvider({ LLM_PROVIDER: "anthropic" })).toBe("openai");
     expect(detectCriticProvider({})).toBe("openai");
   });
 
-  test("default: main=openai なら critic=anthropic", () => {
+  test("default: main=openai → critic=anthropic", () => {
     expect(detectCriticProvider({ LLM_PROVIDER: "openai" })).toBe("anthropic");
   });
 });
 
 describe("detectMainProvider", () => {
-  test("LLM_PROVIDER 値を尊重", () => {
+  test("respects LLM_PROVIDER value", () => {
     expect(detectMainProvider({ LLM_PROVIDER: "openai" })).toBe("openai");
     expect(detectMainProvider({ LLM_PROVIDER: "gemini" })).toBe("gemini");
   });
-  test("未設定なら anthropic", () => {
+  test("unset → anthropic", () => {
     expect(detectMainProvider({})).toBe("anthropic");
   });
 });
 
 describe("buildAgentEnv — critic key isolation", () => {
-  test("default: main=anthropic + critic=openai → OPENAI_API_KEY を strip、ANTHROPIC は残す", () => {
+  test("default: main=anthropic + critic=openai → strips OPENAI_API_KEY, keeps ANTHROPIC", () => {
     const env = buildAgentEnv({
       ANTHROPIC_API_KEY: "sk-ant-xxx",
       OPENAI_API_KEY: "sk-yyy",
@@ -43,7 +43,7 @@ describe("buildAgentEnv — critic key isolation", () => {
     expect(env.PATH).toBe("/usr/bin");
   });
 
-  test("LLM_PROVIDER_CRITICAL=gemini → GEMINI_API_KEY を strip", () => {
+  test("LLM_PROVIDER_CRITICAL=gemini → strips GEMINI_API_KEY", () => {
     const env = buildAgentEnv({
       ANTHROPIC_API_KEY: "sk-ant-xxx",
       GEMINI_API_KEY: "AIza-yyy",
@@ -51,10 +51,10 @@ describe("buildAgentEnv — critic key isolation", () => {
     });
     expect(env.GEMINI_API_KEY).toBeUndefined();
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-xxx");
-    expect(env.LLM_PROVIDER_CRITICAL).toBeUndefined(); // config disclosure 防止
+    expect(env.LLM_PROVIDER_CRITICAL).toBeUndefined(); // prevent config disclosure
   });
 
-  test("main=critic 同 provider なら strip しない (両方必要)", () => {
+  test("main=critic same provider → no strip (both needed)", () => {
     const env = buildAgentEnv({
       ANTHROPIC_API_KEY: "sk-ant-xxx",
       LLM_PROVIDER: "anthropic",
@@ -63,7 +63,7 @@ describe("buildAgentEnv — critic key isolation", () => {
     expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-xxx");
   });
 
-  test("SHIBAKI_ALLOW_AGENT_SECRETS=1 で strip 無効化 (opt-out)", () => {
+  test("SHIBAKI_ALLOW_AGENT_SECRETS=1 disables strip (opt-out)", () => {
     const env = buildAgentEnv({
       OPENAI_API_KEY: "sk-yyy",
       SHIBAKI_ALLOW_AGENT_SECRETS: "1",
@@ -71,7 +71,7 @@ describe("buildAgentEnv — critic key isolation", () => {
     expect(env.OPENAI_API_KEY).toBe("sk-yyy");
   });
 
-  test("config 系 env (LLM_PROVIDER / LLM_MODEL_*) は always strip", () => {
+  test("config envs (LLM_PROVIDER / LLM_MODEL_*) are always stripped", () => {
     const env = buildAgentEnv({
       ANTHROPIC_API_KEY: "sk-ant",
       LLM_PROVIDER: "anthropic",
@@ -85,7 +85,7 @@ describe("buildAgentEnv — critic key isolation", () => {
     expect(env.LLM_MODEL_LIGHT).toBeUndefined();
   });
 
-  test("OPENAI_BASE_URL / OPENAI_ORG_ID も openai critic なら strip", () => {
+  test("OPENAI_BASE_URL / OPENAI_ORG_ID are also stripped under openai critic", () => {
     const env = buildAgentEnv({
       ANTHROPIC_API_KEY: "sk-ant",
       OPENAI_API_KEY: "sk-yyy",

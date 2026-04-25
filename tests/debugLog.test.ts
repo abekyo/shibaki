@@ -1,22 +1,22 @@
-// debugLog の出力先と filename 形式の契約テスト。
-// 過去の cwd-relative .shibaki/ 散らばり問題を防ぐため ~/.shibaki/logs/ に集約。
+// Contract tests for debugLog output location and filename format.
+// Consolidates under ~/.shibaki/logs/ to avoid the past problem of cwd-relative .shibaki/ scatter.
 import { expect, test, describe } from "bun:test";
 import { rm, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { openDebugLog } from "../src/loop/debugLog.ts";
 
-describe("openDebugLog — 出力場所", () => {
-  test("~/.shibaki/logs/ 配下に書き出される (cwd には書かない)", async () => {
+describe("openDebugLog — output location", () => {
+  test("writes under ~/.shibaki/logs/ (not under cwd)", async () => {
     const cwd = "/tmp/some-fake-project";
     const logger = await openDebugLog(cwd);
     try {
-      // path は ~/.shibaki/logs/ 配下
+      // path is under ~/.shibaki/logs/
       const expectedDir = join(homedir(), ".shibaki", "logs");
       expect(logger.path.startsWith(expectedDir + "/") || logger.path.startsWith(expectedDir + "\\")).toBe(true);
-      // cwd の中には作っていない
+      // not created inside cwd
       expect(logger.path).not.toContain(cwd);
-      // ファイル実在
+      // file exists
       const s = await stat(logger.path);
       expect(s.isFile()).toBe(true);
     } finally {
@@ -24,17 +24,17 @@ describe("openDebugLog — 出力場所", () => {
     }
   });
 
-  test("filename に project basename を含む (複数 repo の log を grep しやすく)", async () => {
+  test("filename contains project basename (so logs across repos grep cleanly)", async () => {
     const logger = await openDebugLog("/tmp/myproject-foo");
     try {
-      // basename = "myproject-foo" が filename にあるはず
+      // basename "myproject-foo" should appear in filename
       expect(logger.path).toContain("myproject-foo");
     } finally {
       await rm(logger.path, { force: true });
     }
   });
 
-  test("最初の record に cwd が記録される (basename 衝突時の区別子)", async () => {
+  test("first record records cwd (disambiguator for basename collisions)", async () => {
     const cwd = "/tmp/foo/bar/projectX";
     const logger = await openDebugLog(cwd);
     try {
@@ -48,12 +48,12 @@ describe("openDebugLog — 出力場所", () => {
     }
   });
 
-  test("filename 不正文字はサニタイズ", async () => {
+  test("invalid filename characters are sanitized", async () => {
     const cwd = "/tmp/with spaces and / slashes";
     const logger = await openDebugLog(cwd);
     try {
-      // basename = "with spaces and " (trailing slash の前) → space などサニタイズで _ に
-      // path には空白 / スラッシュは入らない (basename 由来部分について)
+      // basename = "with spaces and " (before trailing slash) → spaces etc. sanitized to _
+      // path contains no whitespace / slashes (in the basename-derived portion)
       const fname = logger.path.split("/").pop()!;
       expect(fname).not.toMatch(/[ ]/);
     } finally {

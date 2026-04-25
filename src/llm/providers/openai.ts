@@ -13,7 +13,7 @@ async function client(): Promise<any> {
   return _client;
 }
 
-// 新世代モデル (o1 / o3 / gpt-5 系) は max_tokens 不可、max_completion_tokens を要求
+// New-generation models (o1 / o3 / gpt-5 family) reject max_tokens and require max_completion_tokens
 function isNewGenModel(model: string): boolean {
   return /^o1(-|$)/.test(model) || /^o3(-|$)/.test(model) || /^gpt-5/.test(model);
 }

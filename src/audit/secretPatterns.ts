@@ -1,14 +1,14 @@
-// Known secret pattern set。gitleaks / truffleHog の主要パターンを参考にした最小集合。
-// release-time の sweep のみで使う。critic loop には流さない。
+// Known secret pattern set. A minimal set drawn from the main patterns in gitleaks / truffleHog.
+// Used only for release-time sweeps; do not feed into the critic loop.
 //
-// この層では false positive を恐れずに「疑わしきは検出」する (release 前は厳しめが正解)。
-// 実際の運用では gitleaks 等の専門ツールを併用することを README で推奨。
+// At this layer, prefer "if in doubt, flag it" without fearing false positives (strict-before-release is correct).
+// In real operation, the README recommends running a dedicated tool like gitleaks alongside.
 
 export interface SecretPattern {
   id: string;
   description: string;
   regex: RegExp;
-  // false positive 軽減のため、この pattern は test ファイル / docs では allow する
+  // To reduce false positives, allow this pattern in test files / docs
   allowInTestsAndDocs?: boolean;
 }
 
@@ -85,7 +85,7 @@ export const SECRET_PATTERNS: SecretPattern[] = [
   },
 ];
 
-/** path がテスト or docs ならば false positive を許容 */
+/** Tolerate false positives if the path is in tests or docs */
 export function isTestOrDocsPath(path: string): boolean {
   return /(^|\/)(tests?|spec|docs?|examples?|fixtures?|samples?)\//.test(path)
     || /\.(test|spec)\.[jt]sx?$/.test(path)

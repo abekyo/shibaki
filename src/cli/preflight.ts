@@ -13,7 +13,7 @@ export interface PreflightFailure {
   hint: string;
 }
 
-// API provider のみ key 必須。CLI provider は key を持たない (ユーザーの CLI 認証任せ)。
+// Only API providers require a key. CLI providers have no key (rely on the user's CLI auth).
 const REQUIRED_KEY: Record<"anthropic" | "openai" | "gemini", string> = {
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",

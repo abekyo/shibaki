@@ -1,30 +1,30 @@
-// Secret isolation: agent subprocess は critic 専用の API key / 設定を見えないようにする。
+// Secret isolation: hide critic-only API keys / config from agent subprocesses.
 //
-// 原則: 「秘密情報の構造的隔離 — LLM 生成コードから不可視」
-// - Shibaki 親プロセスは critic 用 API key を持つ
-// - そこから spawn される agent (claude -p / aider 等) はこれを inherit しない
-// - 悪意ある agent が critic key を exfiltration するのを構造的に防ぐ
+// Principle: "structural isolation of secrets — invisible to LLM-generated code"
+// - The Shibaki parent process holds the critic's API key
+// - Agents spawned from it (claude -p / aider, etc.) do not inherit it
+// - Structurally prevents a malicious agent from exfiltrating the critic key
 //
-// strip 対象:
-// - critic 側 provider の API key (OPENAI / GEMINI / ANTHROPIC のうち critic に該当するもの)
-// - critic 専用設定 (LLM_PROVIDER_CRITICAL / LLM_MODEL_CRITICAL)
+// Stripped:
+// - API key of the critic-side provider (OPENAI / GEMINI / ANTHROPIC, whichever applies to the critic)
+// - Critic-only config (LLM_PROVIDER_CRITICAL / LLM_MODEL_CRITICAL)
 //
-// strip しない:
-// - agent 側 provider の API key (例: agent が claude -p なら ANTHROPIC_API_KEY は維持)
-// - HOME / PATH / SHELL 等の基本 env
+// Not stripped:
+// - API key of the agent-side provider (e.g., if agent is claude -p, ANTHROPIC_API_KEY is kept)
+// - Basic env like HOME / PATH / SHELL
 //
 // CLI mode:
-// - critic が anthropic-cli / gemini-cli / codex-cli の場合、critic は API key を持たない
-//   ので strip 対象の key も存在しない。ただし LLM_PROVIDER_CRITICAL / LLM_MODEL_CRITICAL 等の
-//   config 系 env は従来通り strip する (disclosure 回避)。
+// - When the critic is anthropic-cli / gemini-cli / codex-cli, the critic has no API key,
+//   so there's no key to strip. However, config env like LLM_PROVIDER_CRITICAL / LLM_MODEL_CRITICAL
+//   are stripped as before (avoid disclosure).
 //
-// 注意: agent CLI が multi-provider (例: aider) で複数 key を必要とする場合、
-// この strip が agent を壊す可能性がある。その場合 SHIBAKI_ALLOW_AGENT_SECRETS=1 で opt-out。
+// Note: if the agent CLI is multi-provider (e.g., aider) and needs multiple keys,
+// this strip may break the agent. In that case opt-out via SHIBAKI_ALLOW_AGENT_SECRETS=1.
 
 import { type ProviderName, type ProviderFamily, providerFamily, isCliProvider } from "../llm/types.ts";
 
-// 後方互換: Provider は旧 API 型 (3 値) と CLI 型 (6 値) のユニオン。
-// 新規コードは ProviderName を使う。
+// Backward compatibility: Provider is a union of the old API type (3 values) and the CLI type (6 values).
+// New code uses ProviderName.
 export type Provider = ProviderName;
 
 const VALID: ProviderName[] = [
@@ -40,13 +40,13 @@ function parse(v: string | undefined): ProviderName | null {
 export function detectCriticProvider(env: NodeJS.ProcessEnv = process.env): ProviderName {
   const explicit = parse(env.LLM_PROVIDER_CRITICAL);
   if (explicit) return explicit;
-  // default: main と別 family になるよう自動選択
-  //  anthropic 系 → openai, openai 系 → anthropic, gemini 系 → anthropic
+  // default: auto-select to be a different family from main
+  //  anthropic family → openai, openai family → anthropic, gemini family → anthropic
   const main = detectMainProvider(env);
   const fam = providerFamily(main);
   if (fam === "anthropic") return "openai";
   if (fam === "openai") return "anthropic";
-  return "anthropic"; // main が gemini 系
+  return "anthropic"; // main is gemini family
 }
 
 export function detectMainProvider(env: NodeJS.ProcessEnv = process.env): ProviderName {
@@ -54,8 +54,8 @@ export function detectMainProvider(env: NodeJS.ProcessEnv = process.env): Provid
 }
 
 /**
- * agent subprocess に渡す env を作る。critic 用 secret を strip。
- * SHIBAKI_ALLOW_AGENT_SECRETS=1 が設定されてたら strip しない (opt-out)。
+ * Build the env to pass to the agent subprocess. Strips critic-only secrets.
+ * Does not strip if SHIBAKI_ALLOW_AGENT_SECRETS=1 is set (opt-out).
  */
 export function buildAgentEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   if (parentEnv.SHIBAKI_ALLOW_AGENT_SECRETS === "1") {
@@ -65,11 +65,11 @@ export function buildAgentEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJ
   const critic = detectCriticProvider(parentEnv);
   const main = detectMainProvider(parentEnv);
 
-  // critic 側 family に紐づく API key を strip。
-  // ただし以下のケースでは strip しない:
-  //  1) critic が CLI provider: そもそも critic は API key を使わないので leak する key が無い。
-  //     この場合 ANTHROPIC_API_KEY 等が env にあっても、それは main 側の資産なので残す。
-  //  2) main も critic も API で同 family: 共有 key なので main が必要とする。
+  // Strip API keys tied to the critic-side family.
+  // Don't strip in the following cases:
+  //  1) Critic is a CLI provider: the critic doesn't use an API key, so there's no key to leak.
+  //     In this case, even if ANTHROPIC_API_KEY etc. is in env, it's a main-side asset and is kept.
+  //  2) Main and critic are both API in the same family: it's a shared key needed by main.
   const keysByFamily: Record<ProviderFamily, string[]> = {
     openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_ORG_ID"],
     anthropic: ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"],
@@ -86,14 +86,14 @@ export function buildAgentEnv(parentEnv: NodeJS.ProcessEnv = process.env): NodeJ
     }
   }
 
-  // critic 専用設定 (key じゃないが disclosure を避ける)
+  // Critic-only config (not a key, but avoid disclosure)
   delete env.LLM_PROVIDER_CRITICAL;
   delete env.LLM_MODEL_CRITICAL;
   delete env.LLM_PROVIDER_LIGHT;
   delete env.LLM_MODEL_LIGHT;
 
-  // Shibaki 内部設定も agent から見えなくする
-  delete env.LLM_PROVIDER; // 親 router の挙動を agent に晒さない
+  // Hide Shibaki internal config from the agent as well
+  delete env.LLM_PROVIDER; // Don't expose the parent router's behavior to the agent
   delete env.SHIBAKI_ALLOW_AGENT_SECRETS;
 
   return env;

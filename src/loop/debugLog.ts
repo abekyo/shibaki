@@ -1,11 +1,12 @@
-// debug ログ書き出し。通常運用では使わず、false negative / false positive の
-// 原因調査時のみ --debug で起動する。原則1 (critic ログを人間に見せない) と衝突しないよう、
-// ユーザーが明示的にフラグを付けた時のみファイルに書き出す。
+// Debug log writer. Not used in normal operation; only enabled via --debug
+// when investigating false-negative / false-positive causes. To avoid colliding
+// with principle 1 (don't show critic logs to humans), we only write to disk
+// when the user explicitly passes the flag.
 //
-// 出力場所: ~/.shibaki/logs/<project>-<timestamp>.jsonl
-//   - cwd 配下に置くと複数 repo を跨ぐと .shibaki/ ディレクトリが各所に散らばる
-//   - user-home に集約すれば logs を 1 箇所で grep / 一括掃除 / アーカイブ できる
-//   - filename に project basename を含めて、複数 repo の log を区別しやすくする
+// Output location: ~/.shibaki/logs/<project>-<timestamp>.jsonl
+//   - placing under cwd would scatter .shibaki/ directories across many repos
+//   - centralizing under user-home lets you grep / bulk-clean / archive logs in one place
+//   - including project basename in the filename makes logs from multiple repos easier to tell apart
 import { mkdir, writeFile, appendFile } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { homedir } from "node:os";
@@ -20,12 +21,12 @@ export async function openDebugLog(cwd: string): Promise<DebugLogger> {
   const dir = join(homedir(), ".shibaki", "logs");
   await mkdir(dir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  // project tag: 同じ basename の repo が複数あっても、log の中の cwd 記録で
-  // 区別できるので filename レベルでは basename だけで十分。
+  // project tag: even if multiple repos share a basename, the cwd recorded inside the log
+  // disambiguates them, so basename alone is sufficient at the filename level.
   const projectTag = sanitizeForFilename(basename(cwd) || "root");
   const path = join(dir, `${projectTag}-${ts}.jsonl`);
   await writeFile(path, "");
-  // 最初の record として cwd を残す (basename 衝突時の最終的な区別子)
+  // Record cwd as the first entry (final disambiguator on basename collisions)
   const headerLine = JSON.stringify({ ts: Date.now(), kind: "session_meta", cwd }) + "\n";
   await appendFile(path, headerLine);
   return {
@@ -35,12 +36,12 @@ export async function openDebugLog(cwd: string): Promise<DebugLogger> {
       await appendFile(path, line);
     },
     async close() {
-      // 明示的な close は不要 (append ごとに flush される) が将来拡張用に残す
+      // No explicit close needed (each append flushes), but kept for future extension
     },
   };
 }
 
-/** filename に使えない文字を _ に置換。空白 / / / : / 制御文字など。 */
+/** Replace filename-unsafe characters with _. Whitespace / / / : / control chars, etc. */
 function sanitizeForFilename(s: string): string {
   return s.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 64);
 }

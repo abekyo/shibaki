@@ -1,5 +1,5 @@
-// Shibaki self-dogfood 用の隔離ファイル (target 2)。Shibaki runtime では import しない。
-// 2 つの関数に別方向の off-by-one を仕込み、partial fix を誘発しやすくする。
+// Isolated file for Shibaki self-dogfood (target 2). Not imported by the Shibaki runtime.
+// Plants off-by-one bugs in opposite directions in two functions to make partial fixes easier to provoke.
 
 export function factorial(n: number): number {
   if (n <= 1) return 1;

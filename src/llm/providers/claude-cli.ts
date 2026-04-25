@@ -1,13 +1,13 @@
-// Claude Code CLI 経由の critic provider。
-// 前提: ユーザーが `claude login` 済み (Claude Code plan サブスク or API key どちらでも)。
-// Shibaki 側では API key を持たない。
+// Critic provider via the Claude Code CLI.
+// Prerequisite: the user has run `claude login` (Claude Code plan subscription or API key, either works).
+// Shibaki itself does not hold an API key.
 //
-// 呼び出し形:
+// Invocation:
 //   claude -p --output-format json --model <model> [--system-prompt <sys>] < stdin
 //
-// 出力 (--output-format json) は以下のような形:
+// Output (--output-format json) looks like:
 //   {"type":"result","subtype":"success","is_error":false,"result":"...","session_id":"..."}
-// "result" フィールドがテキスト本体。is_error なら例外化。
+// The "result" field is the text body. If is_error is set, raise an exception.
 import type { LLMProvider, CallOptions, RawResponse } from "../types.ts";
 import { cliSpawn } from "./cliShared.ts";
 
@@ -29,7 +29,7 @@ export const claudeCliProvider: LLMProvider = {
     if (opts.system && opts.system.trim()) {
       args.push("--system-prompt", opts.system);
     }
-    // user prompt は stdin 経由。jsonMode のときは出力形式を追記。
+    // User prompt goes via stdin. Append output-format instructions when jsonMode is set.
     const stdin = opts.jsonMode
       ? opts.user + "\n\nReply with EXACTLY ONE valid JSON object. Start with `{`, end with `}`. No code fences, no prose."
       : opts.user;
@@ -46,14 +46,14 @@ export const claudeCliProvider: LLMProvider = {
       text,
       model: opts.model,
       request_id: null,
-      // CLI は usage を安定して返さないので省略。cost 計算は API 版で十分。
+      // The CLI does not reliably return usage, so skip it. Cost calculation is fine with the API path alone.
       usage: undefined,
     };
   },
   async testApiKey() {
-    // CLI provider は API key を持たない。CLI の存在だけ確認する。
-    // doctor.ts の which ベースチェックと責務が重複するが、provider 単体で
-    // 健全性を判定できるようにするため testApiKey でも見る。
+    // CLI providers don't hold an API key. Just confirm the CLI exists.
+    // This duplicates the which-based check in doctor.ts, but we still check it here
+    // so the provider can determine its own health on its own.
     const { cliAvailable } = await import("./cliShared.ts");
     const ok = await cliAvailable(resolveBin());
     return ok
@@ -65,15 +65,15 @@ export const claudeCliProvider: LLMProvider = {
   },
 };
 
-/** claude -p --output-format json の stdout から本文テキストを取り出す。
- *  想定形: {"type":"result","result":"...","is_error":false,...}
+/** Extract the body text from `claude -p --output-format json` stdout.
+ *  Expected shape: {"type":"result","result":"...","is_error":false,...}
  *
- *  is_error === true のときは例外を throw。caller (callText / callJson) 側が
- *  withRetry 経由なので、overloaded 等の message が message に入ってれば retry される。
+ *  When is_error === true, throw. The caller (callText / callJson) goes through withRetry,
+ *  so if "overloaded" etc. appears in the message it will be retried.
  *
- *  JSON 不成立時は raw を返す (ユーザーが --output-format を差し替えた等)。
+ *  When the output isn't JSON, return raw (e.g. user swapped --output-format).
  *
- *  試験用に export している (tests/claudeCli.test.ts からの import)。 */
+ *  Exported for testing (imported from tests/claudeCli.test.ts). */
 export function extractResultText(stdout: string): string {
   const trimmed = stdout.trim();
   if (!trimmed) return "";
@@ -82,13 +82,13 @@ export function extractResultText(stdout: string): string {
   try {
     obj = JSON.parse(trimmed);
   } catch {
-    // not JSON — caller の --output-format 差し替えと見なして raw をそのまま渡す
+    // not JSON — assume the caller swapped --output-format and pass raw through
     return trimmed;
   }
 
   if (!obj || typeof obj !== "object") return trimmed;
 
-  // Array (stream-json) ケース — Object.typeof も "object" を返すのでここで先に拾う
+  // Array (stream-json) case — typeof of an object is also "object", so handle this first
   if (Array.isArray(obj)) {
     const texts = obj
       .filter((e: any) => e?.type === "assistant" || e?.type === "result")
@@ -99,7 +99,7 @@ export function extractResultText(stdout: string): string {
   }
 
   if (obj.is_error) {
-    // 注意: この throw は try/catch で囲まれていないので caller に正しく伝播する
+    // Note: this throw is not wrapped in try/catch, so it propagates correctly to the caller
     const detail = obj.result ?? obj.subtype ?? "unknown";
     throw new Error(`claude CLI reported error: ${detail}`);
   }

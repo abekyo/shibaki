@@ -7,7 +7,7 @@ import { join } from "node:path";
 const newTmp = () => join(tmpdir(), `shibaki-pc-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
 describe("collectProjectContext", () => {
-  test("CLAUDE.md / README / package.json / src ツリーを収集", async () => {
+  test("collects CLAUDE.md / README / package.json / src tree", async () => {
     const tmp = newTmp();
     await mkdir(join(tmp, "src"), { recursive: true });
     await mkdir(join(tmp, "tests"), { recursive: true });
@@ -34,7 +34,7 @@ describe("collectProjectContext", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("CLAUDE.md / AGENTS.md / CONTRIBUTING.md 全部あれば全部回収", async () => {
+  test("collects all when CLAUDE.md / AGENTS.md / CONTRIBUTING.md are all present", async () => {
     const tmp = newTmp();
     await mkdir(tmp, { recursive: true });
     await writeFile(join(tmp, "CLAUDE.md"), "claude rules");
@@ -51,7 +51,7 @@ describe("collectProjectContext", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("ファイルが何も無い空ディレクトリでも壊れない", async () => {
+  test("does not break on an empty directory with no files", async () => {
     const tmp = newTmp();
     await mkdir(tmp, { recursive: true });
     const pc = await collectProjectContext(tmp);
@@ -62,7 +62,7 @@ describe("collectProjectContext", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("巨大 CLAUDE.md は truncate", async () => {
+  test("large CLAUDE.md is truncated", async () => {
     const tmp = newTmp();
     await mkdir(tmp, { recursive: true });
     const big = "x".repeat(20_000);
@@ -73,7 +73,7 @@ describe("collectProjectContext", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("package.json から dependencies / scripts のみ抽出 (license 等は除外)", async () => {
+  test("extracts only dependencies / scripts from package.json (excludes license etc.)", async () => {
     const tmp = newTmp();
     await mkdir(tmp, { recursive: true });
     await writeFile(join(tmp, "package.json"), JSON.stringify({
@@ -92,7 +92,7 @@ describe("collectProjectContext", () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
-  test("node_modules / 隠しディレクトリは tree に出さない", async () => {
+  test("node_modules / hidden directories are not shown in tree", async () => {
     const tmp = newTmp();
     await mkdir(join(tmp, "src"), { recursive: true });
     await mkdir(join(tmp, "src/.hidden"), { recursive: true });

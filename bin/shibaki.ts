@@ -9,8 +9,8 @@ import { levenshtein } from "../src/cli/args.ts";
 async function main(): Promise<number> {
   const [, , sub, ...rest] = process.argv;
 
-  // 引数なしの場合: 自動で doctor を走らせて env 状況 + 次の action を表示
-  // (「ダウンロードしてすぐ何をすればいいか分かる」UX)
+  // No arguments: automatically run doctor to show env status + next action
+  // ("download and immediately know what to do" UX)
   if (!sub) {
     const code = await cmdDoctor([]);
     process.stdout.write("\n----\n");
@@ -18,9 +18,9 @@ async function main(): Promise<number> {
     return code;
   }
 
-  // help は 2 段構成: default は SHORT (~20 行 reference)、--help-long で物語版。
-  // `shibaki run --help` 等の subcommand 側は run-detailed の HELP_TEXT を出す
-  // (subcommand 内 handler が担当)。
+  // help is two-tiered: default is SHORT (~20-line reference), --help-long for the narrative version.
+  // Subcommand-side `shibaki run --help` etc. emit the run-detailed HELP_TEXT
+  // (handled inside the subcommand handler).
   if (sub === "-h" || sub === "--help" || sub === "help") {
     process.stdout.write(SHORT_HELP_TEXT);
     return 0;
@@ -39,12 +39,12 @@ async function main(): Promise<number> {
       return await cmdDoctor(rest);
     case "audit-publish":
       return await cmdAuditPublish(rest);
-    // version は --version / -v / version subcommand のいずれでも受ける
-    // (gh / docker / cargo の慣習に合わせる)
+    // Accept version via any of --version / -v / the version subcommand
+    // (matching the gh / docker / cargo convention)
     case "version":
     case "--version":
     case "-v":
-      process.stdout.write("shibaki 0.1.0\n");
+      process.stdout.write("shibaki 0.2.0\n");
       return 0;
     default: {
       const known = ["run", "demo", "doctor", "audit-publish", "version"];

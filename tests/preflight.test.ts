@@ -6,29 +6,29 @@ import {
 } from "../src/cli/preflight.ts";
 
 describe("preflightCriticKey", () => {
-  test("default (main=anthropic, critic=openai): OPENAI_API_KEY 必須", () => {
+  test("default (main=anthropic, critic=openai): OPENAI_API_KEY required", () => {
     expect(preflightCriticKey({})?.reason).toContain("OPENAI_API_KEY");
   });
 
-  test("OPENAI_API_KEY ありで pass", () => {
+  test("passes with OPENAI_API_KEY present", () => {
     expect(preflightCriticKey({
       OPENAI_API_KEY: "sk-aaaaaaaaaa",
     })).toBeNull();
   });
 
-  test("LLM_PROVIDER_CRITICAL=gemini なら GEMINI_API_KEY 必須", () => {
+  test("LLM_PROVIDER_CRITICAL=gemini requires GEMINI_API_KEY", () => {
     expect(preflightCriticKey({
       LLM_PROVIDER_CRITICAL: "gemini",
     })?.reason).toContain("GEMINI_API_KEY");
   });
 
-  test("OPENAI_API_KEY が sk- で始まらないと拒否", () => {
+  test("rejects OPENAI_API_KEY that does not start with sk-", () => {
     expect(preflightCriticKey({
       OPENAI_API_KEY: "wrong-prefix-key",
     })?.reason).toContain("invalid format");
   });
 
-  test("ANTHROPIC critic で sk-ant- prefix チェック", () => {
+  test("ANTHROPIC critic checks sk-ant- prefix", () => {
     expect(preflightCriticKey({
       LLM_PROVIDER_CRITICAL: "anthropic",
       ANTHROPIC_API_KEY: "sk-wrong",
@@ -37,21 +37,21 @@ describe("preflightCriticKey", () => {
 });
 
 describe("preflightProviderSeparation", () => {
-  test("default で main=critic 同 provider 不可 (anthropic)", () => {
+  test("by default main=critic same provider is forbidden (anthropic)", () => {
     expect(preflightProviderSeparation({
       LLM_PROVIDER: "anthropic",
       LLM_PROVIDER_CRITICAL: "anthropic",
     })?.reason).toContain("self-critique");
   });
 
-  test("別 provider なら pass", () => {
+  test("different providers → pass", () => {
     expect(preflightProviderSeparation({
       LLM_PROVIDER: "anthropic",
       LLM_PROVIDER_CRITICAL: "openai",
     })).toBeNull();
   });
 
-  test("SHIBAKI_ALLOW_SAME_PROVIDER=1 で opt-out", () => {
+  test("SHIBAKI_ALLOW_SAME_PROVIDER=1 opts out", () => {
     expect(preflightProviderSeparation({
       LLM_PROVIDER: "anthropic",
       LLM_PROVIDER_CRITICAL: "anthropic",
@@ -60,16 +60,16 @@ describe("preflightProviderSeparation", () => {
   });
 });
 
-describe("runAllPreflight — fail-closed 順序", () => {
-  // CLI 可用性 check は偽装 (true 固定) し、key / 分離ロジックのみ検証。
+describe("runAllPreflight — fail-closed ordering", () => {
+  // CLI availability check is faked (always true); only key / separation logic is tested.
   const alwaysAvail = async (_: string) => true;
 
-  test("key 不在を最初に拒否", async () => {
+  test("rejects missing key first", async () => {
     const r = await runAllPreflight({}, alwaysAvail);
     expect(r?.reason).toContain("OPENAI_API_KEY");
   });
 
-  test("key 通過後に provider 分離 chk", async () => {
+  test("checks provider separation after key passes", async () => {
     const r = await runAllPreflight({
       LLM_PROVIDER: "openai",
       LLM_PROVIDER_CRITICAL: "openai",
@@ -78,7 +78,7 @@ describe("runAllPreflight — fail-closed 順序", () => {
     expect(r?.reason).toContain("self-critique");
   });
 
-  test("両方 pass で null", async () => {
+  test("both pass → null", async () => {
     expect(await runAllPreflight({
       OPENAI_API_KEY: "sk-aaaaaaaa",
     }, alwaysAvail)).toBeNull();

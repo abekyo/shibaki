@@ -1,13 +1,13 @@
-// Codex CLI 経由の critic provider (OpenAI codex CLI)。
-// 前提: ユーザーが `codex` CLI を install + `codex login` 済み。
-// Shibaki 側では OPENAI_API_KEY を持たない運用が可能。
+// Critic provider via the Codex CLI (OpenAI codex CLI).
+// Prerequisite: the user has installed the `codex` CLI and run `codex login`.
+// Shibaki itself does not need to hold OPENAI_API_KEY for this path.
 //
-// 呼び出し形 (non-interactive):
+// Invocation (non-interactive):
 //   codex exec --model <model> [--skip-git-repo-check] < stdin
-// stdout は raw response text。
+// stdout is the raw response text.
 //
-// 注意: codex CLI の flag 体系はバージョン依存。ユーザーが wrapper で差し替えたい場合は
-// CODEX_CLI_BIN で実バイナリを上書き可能にしている。
+// Note: the codex CLI flag scheme is version-dependent. To let the user swap in a wrapper,
+// CODEX_CLI_BIN can override the actual binary.
 import type { LLMProvider, CallOptions, RawResponse } from "../types.ts";
 import { cliSpawn, composeCliPrompt } from "./cliShared.ts";
 
@@ -22,8 +22,8 @@ export const codexCliProvider: LLMProvider = {
   async call(opts: CallOptions): Promise<RawResponse> {
     const bin = resolveBin();
     const prompt = composeCliPrompt(opts.system, opts.user, opts.jsonMode ?? false);
-    // exec = non-interactive, prompt via stdin。--skip-git-repo-check は
-    // Shibaki の作業 cwd がサンドボックス内だったときに codex が拒否しないよう付ける。
+    // exec = non-interactive, prompt via stdin. --skip-git-repo-check is set so
+    // codex doesn't refuse when Shibaki's working cwd is inside a sandbox.
     const args = ["exec", "--model", opts.model, "--skip-git-repo-check"];
 
     const res = await cliSpawn({ bin, args, stdin: prompt });

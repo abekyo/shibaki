@@ -1,12 +1,12 @@
-// Release-time leak detector。critic loop とは独立した deterministic layer。
+// Release-time leak detector. A deterministic layer independent from the critic loop.
 //
-// 検出対象:
-// 1. tracked files 内の secret pattern (gitleaks ライク regex)
-// 2. tracked files 内の user-supplied 禁止語 (.shibaki/sensitive-strings.txt)
-// 3. git commit message / author / committer にある同じ禁止語
-// 4. AI cross-session leak の代表パターン (commit message に過去の名前 / プロジェクト)
+// Detection targets:
+// 1. secret patterns inside tracked files (gitleaks-like regexes)
+// 2. user-supplied forbidden strings inside tracked files (.shibaki/sensitive-strings.txt)
+// 3. the same forbidden strings appearing in git commit message / author / committer
+// 4. representative AI cross-session leak patterns (past names / projects in commit messages)
 //
-// release 直前に 1 回走らせる前提。dev iteration loop には入れない。
+// Designed to run once right before release. Do not put this in the dev iteration loop.
 import { readFile, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { resolve, isAbsolute } from "node:path";
@@ -16,10 +16,10 @@ export type LeakKind = "secret" | "custom_string" | "git_metadata";
 
 export interface Leak {
   kind: LeakKind;
-  patternId: string;          // SECRET_PATTERNS の id or "custom" or "git_<sub>"
+  patternId: string;          // id from SECRET_PATTERNS, or "custom", or "git_<sub>"
   description: string;
   location: string;           // file path or "git:<ref>"
-  excerpt: string;            // 検出箇所周辺 (token 自体は伏せる)
+  excerpt: string;            // text around the hit (the token itself is redacted)
   line?: number;
 }
 
@@ -31,7 +31,7 @@ export interface AuditResult {
   customStringCount: number;
 }
 
-/** メイン audit エントリ */
+/** Main audit entry point */
 export async function auditDirectory(opts: {
   cwd: string;
   customStringsPath?: string;   // default: <cwd>/.shibaki/sensitive-strings.txt
@@ -58,7 +58,7 @@ export async function auditDirectory(opts: {
     const commits = await listGitCommits(cwd, gitDepth);
     scannedCommits = commits.length;
     for (const c of commits) {
-      // 2a. commit message の secret pattern
+      // 2a. secret pattern in commit message
       for (const p of SECRET_PATTERNS) {
         const matches = c.subject.match(p.regex) || c.body?.match(p.regex);
         if (matches) {
@@ -71,7 +71,7 @@ export async function auditDirectory(opts: {
           });
         }
       }
-      // 2b. commit message の custom 禁止語
+      // 2b. custom forbidden strings in commit message
       for (const s of customStrings) {
         if (c.subject.includes(s) || c.body?.includes(s)) {
           leaks.push({
@@ -83,7 +83,7 @@ export async function auditDirectory(opts: {
           });
         }
       }
-      // 2c. author / committer 名 / email も chk
+      // 2c. also check author / committer name / email
       for (const s of customStrings) {
         if (c.authorName.includes(s) || c.authorEmail.includes(s)) {
           leaks.push({
@@ -107,13 +107,13 @@ export async function auditDirectory(opts: {
   };
 }
 
-/** ファイル単位で secret + custom string を scan */
+/** Scan a single file for secrets + custom strings */
 async function scanFile(cwd: string, relPath: string, customStrings: string[]): Promise<Leak[]> {
   const abs = isAbsolute(relPath) ? relPath : resolve(cwd, relPath);
   let content: string;
   try {
     const s = await stat(abs);
-    if (!s.isFile() || s.size > 5 * 1024 * 1024) return []; // 5MB 超は skip (画像 / lock 等)
+    if (!s.isFile() || s.size > 5 * 1024 * 1024) return []; // skip files over 5MB (images / lockfiles / etc.)
     content = await readFile(abs, "utf-8");
   } catch {
     return [];
@@ -129,7 +129,7 @@ async function scanFile(cwd: string, relPath: string, customStrings: string[]): 
     let m;
     while ((m = p.regex.exec(content)) !== null) {
       const lineNo = lineNumberOf(content, m.index);
-      // テスト / docs では「明らかにダミー」(xxx, fake, example) は除外
+      // In tests / docs, exclude "obviously dummy" matches (xxx, fake, example)
       if (inTestOrDocs && looksLikeDummy(m[0])) continue;
       out.push({
         kind: "secret",
@@ -142,7 +142,7 @@ async function scanFile(cwd: string, relPath: string, customStrings: string[]): 
     }
   }
 
-  // custom 禁止語
+  // custom forbidden strings
   for (const s of customStrings) {
     if (!s) continue;
     let idx = content.indexOf(s);
@@ -163,16 +163,16 @@ async function scanFile(cwd: string, relPath: string, customStrings: string[]): 
   return out;
 }
 
-/** "xxx" / "fake" / "example" / "dummy" / "test" を含む or 同一文字 4 連以上 で dummy 扱い */
+/** Treat as dummy if it contains "xxx" / "fake" / "example" / "dummy" / "test", or has 4+ repeated chars */
 function looksLikeDummy(s: string): boolean {
   const lower = s.toLowerCase();
   if (/(?:xxx+|fake|example|dummy|test|placeholder|sample)/.test(lower)) return true;
-  // 同一文字 4 連 (AAAA / aaaa / 1111 等) はテスト用 fixture とみなす
+  // 4+ repeated chars (AAAA / aaaa / 1111 etc.) are treated as test fixtures
   if (/(.)\1{3,}/.test(s)) return true;
   return false;
 }
 
-/** secret 値を伏せて出力 (先頭 8 文字 + ... + 末尾 4 文字) */
+/** Redact the secret value for output (first 8 chars + ... + last 4 chars) */
 function redact(s: string): string {
   if (s.length <= 16) return "***" + s.slice(-2);
   return s.slice(0, 8) + "..." + s.slice(-4);
@@ -221,8 +221,8 @@ interface CommitInfo {
 }
 
 async function listGitCommits(cwd: string, depth: number): Promise<CommitInfo[]> {
-  // git args に null byte は入れられないので、特殊文字列で commit を区切る
-  // フィールドは RS (0x1e)、commit は --- SHIBAKI_COMMIT_SEP --- マーカーで区切る
+  // git args can't contain null bytes, so use a special string to separate commits.
+  // Fields use RS (0x1e); commits are split on the --- SHIBAKI_COMMIT_SEP --- marker.
   const FIELD_SEP = "\x1e";
   const COMMIT_SEP = "----SHIBAKI_COMMIT_SEP----";
   const fmt = `%H${FIELD_SEP}%h${FIELD_SEP}%an${FIELD_SEP}%ae${FIELD_SEP}%s${FIELD_SEP}%b${COMMIT_SEP}`;

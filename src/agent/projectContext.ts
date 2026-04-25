@@ -1,20 +1,20 @@
-// Level 2: critic に "agent と異なる視点" を渡すための project-wide context 収集。
+// Level 2: project-wide context collection to give the critic "a viewpoint different from the agent".
 //
-// 設計意図 (self-verification 2026-04-24 の知見):
-//   critic は agent の strict subset の情報しか持っていなかったため、
-//   別視点を出せず幻覚に走るケースが多かった。
-//   project 規約 (CLAUDE.md) / プロジェクト構造 / 依存関係を critic に追加で渡すことで、
-//   "agent が見ていない / agent には強制されない" 規約を critic が引っ張れるようにする。
+// Design intent (insight from self-verification 2026-04-24):
+//   The critic had only a strict subset of the agent's info, so it often couldn't offer a
+//   different viewpoint and ran into hallucinations.
+//   By additionally handing project conventions (CLAUDE.md) / project structure / dependencies
+//   to the critic, the critic can pull in conventions that "the agent isn't looking at / isn't enforced on the agent".
 //
-// 1 セッション中は frozen (orchestrator が起動時に 1 回収集、毎試行同じものを渡す)
+// Frozen during one session (orchestrator collects once at startup, passes the same one every try)
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface ProjectContext {
   conventionDocs: { path: string; content: string }[]; // CLAUDE.md / CONTRIBUTING.md / AGENTS.md
-  readmeHead: string;                                    // README.md の冒頭 (規約や設計意図が書かれていることが多い)
-  packageJson: string;                                   // dependencies / scripts (tech stack 推察)
-  sourceTree: string;                                    // src/ + tests/ の浅いツリー
+  readmeHead: string;                                    // Head of README.md (conventions and design intent are often written here)
+  packageJson: string;                                   // dependencies / scripts (infer tech stack)
+  sourceTree: string;                                    // Shallow tree of src/ + tests/
 }
 
 const CONVENTION_FILE_NAMES = ["CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md"];
@@ -26,7 +26,7 @@ const SOURCE_TREE_DIRS = ["src", "lib", "app", "tests", "docs"];
 const SOURCE_TREE_MAX_DEPTH = 3;
 const SOURCE_TREE_MAX_FILES = 60;
 
-/** project 全体のコンテキストを収集 (Level 2: 別視点の素材) */
+/** Collect project-wide context (Level 2: material for a different viewpoint) */
 export async function collectProjectContext(cwd: string): Promise<ProjectContext> {
   const [conventionDocs, readmeHead, packageJson, sourceTree] = await Promise.all([
     collectConventionDocs(cwd),
@@ -75,7 +75,7 @@ async function readReadmeHead(cwd: string): Promise<string> {
 async function readPackageJson(cwd: string): Promise<string> {
   try {
     const raw = await readFile(join(cwd, "package.json"), "utf-8");
-    // dependencies / scripts のみに絞る (license / author 等はノイズ)
+    // Narrow to dependencies / scripts only (license / author etc. are noise)
     const obj = JSON.parse(raw);
     const filtered: Record<string, unknown> = {};
     for (const k of ["name", "version", "type", "scripts", "dependencies", "devDependencies", "engines"]) {

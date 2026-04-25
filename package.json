@@ -1,6 +1,6 @@
 {
   "name": "shibaki",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Slap your AI agent when it drifts off-task. A 30-second human meta-correction layer for AI coding agents.",
   "license": "MIT",
   "author": "Opportunity Inc. <info@opport.jp> (https://www.opport.jp)",

@@ -1,20 +1,20 @@
 // Shibaki LLM router
-// critic は main agent と別プロバイダを強制するのが北極星 (原則2)。
+// North-star: force the critic to use a different provider from the main agent (principle 2).
 //
 // env:
-//   LLM_PROVIDER                = main agent の宣言 (family 判定用)
+//   LLM_PROVIDER                = declares the main agent (used for family detection)
 //                                 anthropic | openai | gemini | anthropic-cli | gemini-cli | codex-cli
 //                                 (default: anthropic)
-//   LLM_PROVIDER_CRITICAL       = critic 専用 provider override
-//   LLM_MODEL_CRITICAL          = 明示モデル名
-//   LLM_PROVIDER_LIGHT / LLM_MODEL_LIGHT = 補助用
+//   LLM_PROVIDER_CRITICAL       = critic-only provider override
+//   LLM_MODEL_CRITICAL          = explicit model name
+//   LLM_PROVIDER_LIGHT / LLM_MODEL_LIGHT = auxiliary
 //
-// 設計方針: main agent は外部 CLI (claude -p 等) を spawn するため、
-// この router が担当するのは critic + 補助 LLM のみ。
+// Design: the main agent is spawned as an external CLI (claude -p etc.), so this
+// router only handles the critic + auxiliary LLMs.
 //
-// CLI provider (anthropic-cli / gemini-cli / codex-cli) は API key 不要で
-// ローカルの `claude` / `gemini` / `codex` を呼ぶ経路。Claude Code plan 等の
-// サブスク契約ユーザーが追加 API 契約なしで critic を動かせる。
+// The CLI providers (anthropic-cli / gemini-cli / codex-cli) call local `claude` / `gemini` /
+// `codex` without an API key. Subscription users (Claude Code plan etc.) can run the critic
+// without taking out an additional API contract.
 import { anthropicProvider } from "./llm/providers/anthropic.ts";
 import { openaiProvider } from "./llm/providers/openai.ts";
 import { geminiProvider } from "./llm/providers/gemini.ts";
@@ -39,8 +39,8 @@ export const CRITICAL = "CRITICAL" as const;
 export const MAIN = "MAIN" as const;
 export const LIGHT = "LIGHT" as const;
 
-// CLI 系は model 指定が API 系と違う (alias "sonnet"/"opus" や gemini-cli 独自 model 名)。
-// default は "critic は main より強い model を使う" 方針。
+// CLI providers take different model names than API providers (aliases like "sonnet"/"opus"
+// or gemini-cli's own model names). The default policy is "critic uses a stronger model than main".
 const DEFAULT_MODELS: Record<ProviderName, Record<Tier, string>> = {
   anthropic: {
     CRITICAL: "claude-opus-4-7",
@@ -71,15 +71,15 @@ const VALID_PROVIDERS: ProviderName[] = [
 function activeProviderForTier(tier: Tier): { provider: LLMProvider; model: string } {
   const def = (process.env.LLM_PROVIDER as ProviderName) || "anthropic";
 
-  // CRITICAL tier の default を「main と別 family」に寄せる。
-  //  - main=anthropic 系なら critic=openai
-  //  - main=openai 系なら critic=anthropic
-  //  - main=gemini 系なら critic=anthropic
-  // 明示 override があればそちらを優先。
+  // Default the CRITICAL tier to "different family than main":
+  //  - main=anthropic family → critic=openai
+  //  - main=openai family    → critic=anthropic
+  //  - main=gemini family    → critic=anthropic
+  // Explicit override wins if set.
   const criticalDefault: ProviderName =
     def === "anthropic" || def === "anthropic-cli" ? "openai"
     : def === "openai" || def === "codex-cli" ? "anthropic"
-    : /* gemini 系 */ "anthropic";
+    : /* gemini family */ "anthropic";
 
   const tierEnv =
     tier === "CRITICAL" ? process.env.LLM_PROVIDER_CRITICAL ?? criticalDefault
@@ -101,13 +101,13 @@ function resolveCall(modelOrTier: string): { provider: LLMProvider; model: strin
   if (modelOrTier === CRITICAL || modelOrTier === MAIN || modelOrTier === LIGHT) {
     return activeProviderForTier(modelOrTier as Tier);
   }
-  // 明示的モデル名指定の場合、anthropic にルーティング (後方互換用)
+  // When an explicit model name is given, route to anthropic (for backward compatibility)
   return { provider: anthropicProvider, model: modelOrTier };
 }
 
-/** provider.call を withRetry でラップする共通ヘルパ。
- *  overloaded / 5xx / ECONNRESET 系は自動 retry (3 回、~29s backoff)。
- *  retry 発火時は stderr に 1 行出して透明性を担保する。 */
+/** Shared helper that wraps provider.call with withRetry.
+ *  overloaded / 5xx / ECONNRESET-class errors auto-retry (3 attempts, ~29s backoff).
+ *  On retry firing, emit a single stderr line for transparency. */
 function callWithRetry(
   provider: LLMProvider,
   params: { model: string; system: string; user: string; maxTokens: number; jsonMode: boolean },
@@ -172,13 +172,13 @@ export async function callJson<T = any>(
 
 function extractJson<T>(raw: string): T {
   const trimmed = raw.trim();
-  // コードフェンス剥がし
+  // strip code fences
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/m.exec(trimmed);
   const body = fenced ? fenced[1] : trimmed;
   try {
     return JSON.parse(body);
   } catch {
-    // 最初の { から最後の } までを強引に抜く
+    // forcibly extract from the first { to the last }
     const start = body.indexOf("{");
     const end = body.lastIndexOf("}");
     if (start >= 0 && end > start) {
@@ -188,7 +188,7 @@ function extractJson<T>(raw: string): T {
   }
 }
 
-// parse_output で使う防御的ヘルパ
+// Defensive helpers used by parse_output
 export function asString(v: any): string {
   return typeof v === "string" ? v : "";
 }

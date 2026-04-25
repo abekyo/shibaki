@@ -1,19 +1,19 @@
-// CLI-backed provider の共通 subprocess 起動ロジック。
+// Shared subprocess spawn logic for CLI-backed providers.
 //
-// claude-cli / gemini-cli / codex-cli は全て「ローカル CLI に prompt を渡して
-// stdout で結果を受け取る」という同じ形。spawn + timeout + 出力上限 cap を
-// ここに集約する。
+// claude-cli / gemini-cli / codex-cli all share the same shape: "pass a prompt to a
+// local CLI and receive the result on stdout". Concentrate spawn + timeout + output
+// size cap here.
 //
-// セキュリティ:
-//  - 引数は必ず array で spawn (shell なし) — injection 回避
-//  - critic から呼ぶので、ユーザーの prompt を混ぜた文字列を shell に渡さない
+// Security:
+//  - Always spawn with args as an array (no shell) — avoids injection
+//  - Since the critic invokes this, never pass a string mixed with the user's prompt to the shell
 //
-// 注意: CLI のバージョン差で flag が変わる可能性がある。ユーザーが上書きしたい
-// 場合は env (CLAUDE_CLI_BIN など) で実バイナリ名だけ差し替えできるようにする。
+// Note: flags may change across CLI versions. Let the user override only the actual binary name
+// via env (e.g. CLAUDE_CLI_BIN) to swap implementations.
 import { spawn } from "node:child_process";
 
 const MAX_OUTPUT_BYTES = 2 * 1024 * 1024; // 2 MiB
-const DEFAULT_TIMEOUT_MS = 180_000; // 3 分 (大きい model は応答遅め)
+const DEFAULT_TIMEOUT_MS = 180_000; // 3 minutes (larger models respond slowly)
 
 export interface CliSpawnResult {
   stdout: string;
@@ -27,7 +27,7 @@ export interface CliSpawnOptions {
   args: string[];
   stdin?: string;
   timeoutMs?: number;
-  /** spawn 時の env override。未指定なら process.env */
+  /** env override for spawn. Defaults to process.env if unset */
   env?: NodeJS.ProcessEnv;
 }
 
@@ -97,8 +97,8 @@ export async function cliSpawn(opts: CliSpawnOptions): Promise<CliSpawnResult> {
   });
 }
 
-/** system + user を CLI prompt に合成する。
- *  API 系の role 分離が無い CLI (claude -p / codex exec 等) ではこの形で渡すのが一番確実。 */
+/** Compose system + user into a single CLI prompt.
+ *  For CLIs without API-style role separation (claude -p / codex exec etc.), this layout is the most reliable. */
 export function composeCliPrompt(system: string, user: string, jsonMode: boolean): string {
   const parts: string[] = [];
   if (system && system.trim()) {
@@ -117,8 +117,8 @@ export function composeCliPrompt(system: string, user: string, jsonMode: boolean
   return parts.join("\n\n");
 }
 
-// CLI provider のバイナリ + 上書き env + install hint を集約。
-// キーは ProviderName の CLI variant、値は (defaultBin, envVar, install) トリプル。
+// Aggregates each CLI provider's binary + override env + install hint.
+// Keys are the CLI variants of ProviderName; values are (defaultBin, envVar, install) triples.
 export const CLI_INFO: Record<
   "anthropic-cli" | "gemini-cli" | "codex-cli",
   { defaultBin: string; envVar: string; install: string }
@@ -140,7 +140,7 @@ export const CLI_INFO: Record<
   },
 };
 
-/** CLI which-check 用。未インストール時 testApiKey で親切なエラーを出すのに使う。 */
+/** CLI which-check helper. Used by testApiKey to surface a friendly error when the CLI is not installed. */
 export async function cliAvailable(bin: string): Promise<boolean> {
   return new Promise((resolve) => {
     const c = spawn("which", [bin], { stdio: "ignore" });

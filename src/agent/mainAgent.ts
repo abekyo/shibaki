@@ -1,14 +1,14 @@
-// 外部 agent コマンド (例: "claude -p") を spawn してタスクを渡し、成果物を回収する。
-// Phase 1 では shell でコマンドを起動 → stdin にタスクを書き込む → stdout を回収する最小実装。
+// Spawn an external agent command (e.g., "claude -p"), pass it a task, and collect the output.
+// Phase 1 is a minimal implementation: launch command via shell → write task to stdin → collect stdout.
 //
-// 注意: main agent は Shibaki プロセスと同じリポジトリ上で作業する前提。
-// 作業前後の git diff を critic 入力に使う。
+// Note: the main agent is assumed to work on the same repository as the Shibaki process.
+// The git diff before and after work is used as critic input.
 //
-// セキュリティ: agent subprocess には critic 専用 API key を **inherit させない**
-// (secretIsolation.ts で sanitize)。SHIBAKI_ALLOW_AGENT_SECRETS=1 で opt-out 可能。
+// Security: the agent subprocess **does not inherit** critic-only API keys
+// (sanitized in secretIsolation.ts). Can opt-out via SHIBAKI_ALLOW_AGENT_SECRETS=1.
 //
-// OOM 防止: subprocess の stdout/stderr は MAX_OUTPUT_BYTES (5MB) で打ち切る。
-// runaway agent (無限ループで巨大 log を吐く) を critic 経由で kill するための保険。
+// OOM prevention: subprocess stdout/stderr is cut off at MAX_OUTPUT_BYTES (5MB).
+// Safety net for killing a runaway agent (infinite loop spewing huge logs) via the critic.
 import { spawn } from "node:child_process";
 import { buildAgentEnv } from "./secretIsolation.ts";
 
@@ -43,15 +43,15 @@ export interface MainAgentResult {
   stderr: string;
   exitCode: number;
   durationMs: number;
-  diff: string; // 作業前後の git diff (変更された範囲のレビュー用)
+  diff: string; // git diff before and after work (for reviewing the modified range)
 }
 
 export interface MainAgentOptions {
-  agentCmd: string;      // 例: "claude -p"
-  task: string;          // 自然言語タスク
+  agentCmd: string;      // e.g., "claude -p"
+  task: string;          // Natural-language task
   cwd?: string;
   timeoutMs?: number;
-  extraContext?: string; // 前回の反例 + preempt hint を注入する
+  extraContext?: string; // Inject previous counterexamples + preempt hints
 }
 
 export async function runMainAgent(opts: MainAgentOptions): Promise<MainAgentResult> {
@@ -89,11 +89,11 @@ function spawnShell(
   timeoutMs: number,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
-    // agent には critic 用 secret を inherit させない (secret isolation 原則)
+    // Don't let the agent inherit critic-only secrets (secret isolation principle)
     const env = buildAgentEnv(process.env);
-    // detached: true で sh + その子孫を独立 process group に置く。
-    // タイムアウト時 / 親が SIGINT を受けた時に kill(-pid) でツリーごと殺せる
-    // (default の child.kill は sh だけ殺して claude が孤児として残る)。
+    // detached: true puts sh + its descendants in an independent process group.
+    // On timeout / when the parent receives SIGINT, we can kill the whole tree with kill(-pid)
+    // (default child.kill only kills sh, leaving claude as an orphan).
     const child = spawn("sh", ["-c", cmd], {
       cwd, env, stdio: ["pipe", "pipe", "pipe"], detached: true,
     });
@@ -123,8 +123,8 @@ function spawnShell(
   });
 }
 
-// 親プロセスで生存中の子 (sh + その子孫 process group のリーダ) を保持。
-// SIGINT/SIGTERM を受けた時に kill all を可能にする。
+// Track live children (sh + leaders of their descendant process groups) in the parent process.
+// Enables kill-all when SIGINT/SIGTERM is received.
 const liveChildren: Set<ReturnType<typeof spawn>> = new Set();
 function trackChild(c: ReturnType<typeof spawn>): void { liveChildren.add(c); }
 function untrackChild(c: ReturnType<typeof spawn>): void { liveChildren.delete(c); }
@@ -132,17 +132,17 @@ function untrackChild(c: ReturnType<typeof spawn>): void { liveChildren.delete(c
 function killTree(child: ReturnType<typeof spawn>, sig: NodeJS.Signals): void {
   if (!child.pid) return;
   try {
-    // detached: true で起動した子は process group leader (pgid === pid)。
-    // -pid を渡すと group 全体に signal を送れる。
+    // A child launched with detached: true is a process group leader (pgid === pid).
+    // Passing -pid sends the signal to the entire group.
     process.kill(-child.pid, sig);
   } catch {
-    // already dead / EPERM: 単体 kill にフォールバック
+    // already dead / EPERM: fall back to a single kill
     try { child.kill(sig); } catch { /* swallow */ }
   }
 }
 
-/** Public: 親が SIGINT/SIGTERM を受けた時、生きてる子プロセスツリーを全部殺す。
- *  orchestrator の SIGINT handler から呼ぶ前提。idempotent。 */
+/** Public: when the parent receives SIGINT/SIGTERM, kill all living child process trees.
+ *  Intended to be called from the orchestrator's SIGINT handler. Idempotent. */
 export function killAllChildren(sig: NodeJS.Signals = "SIGTERM"): void {
   for (const c of liveChildren) killTree(c, sig);
 }
@@ -198,7 +198,7 @@ export function execCapture(
   timeoutMs = 60_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
-    // verify / git 系の subprocess も同様に critic 用 secret を inherit しない
+    // verify / git subprocesses likewise don't inherit critic-only secrets
     const env = buildAgentEnv(process.env);
     const child = spawn("sh", ["-c", cmd], {
       cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true,
