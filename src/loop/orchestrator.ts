@@ -20,6 +20,7 @@ import {
   type Pattern,
 } from "../memory/patterns.ts";
 import { buildPatternsSnapshot } from "../memory/snapshot.ts";
+import { red, green } from "../cli/colors.ts";
 
 export interface LoopResult {
   ok: boolean;
@@ -395,8 +396,14 @@ function progress(line: string): void {
 // per try; the trust gain is being able to see the AI-vs-AI dialog directly.
 function printCriticVerdict(r: Awaited<ReturnType<typeof runRebuttal>>): void {
   const out = process.stderr;
-  const sym = r.verdict === "refuted" ? "✗" : "✓";
-  out.write(`  ${sym} critic: ${r.verdict}${r.reason ? ` — ${r.reason}` : ""}\n`);
+  // On-brand verb choice: refuted → "slaps" (the project's namesake), unable_to_refute → "approves".
+  // Replaces the previous bare "✗ critic: refuted —" / "✓ critic: unable_to_refute" lines.
+  // Color carries the same semantic (red = bad, green = good) for at-a-glance scanning.
+  if (r.verdict === "refuted") {
+    out.write(`  ${red("✗")} critic ${red("slaps")}: ${r.reason || ""}\n`);
+  } else {
+    out.write(`  ${green("✓")} critic ${green("approves")}${r.reason ? `: ${r.reason}` : ""}\n`);
+  }
 
   if (r.scope_drift_detected && r.scope_question) {
     out.write(`    scope drift: ${r.scope_question}\n`);
@@ -474,8 +481,8 @@ function phaseTicker(
       const sec = Math.floor((Date.now() - start) / 1000);
       if (interval) {
         clearInterval(interval);
-        // Finalize the line with the final elapsed time + newline
-        process.stderr.write(`\r  ↳ ${label} (${sec}s) ✓     \n`);
+        // Finalize the line with the final elapsed time + newline (✓ green for symmetry with verdict)
+        process.stderr.write(`\r  ↳ ${label} (${sec}s) ${green("✓")}     \n`);
       } else {
         process.stderr.write(`  ↳ ${label} done (${sec}s)\n`);
       }
