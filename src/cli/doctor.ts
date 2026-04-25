@@ -92,7 +92,7 @@ export async function cmdDoctor(argv: string[]): Promise<number> {
 function shibakiInvocation(): string {
   const bin = process.argv[1] ?? "";
   const installed = !bin.endsWith(".ts") && /\/bin\/shibaki(\.\w+)?$/.test(bin);
-  return installed ? "shibaki" : "bunx shibaki@latest";
+  return installed ? "shibaki" : "bunx shibaki-cli@latest";
 }
 
 async function checkBun(): Promise<CheckResult> {

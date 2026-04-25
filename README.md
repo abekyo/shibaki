@@ -131,7 +131,7 @@ npm install -g @anthropic-ai/claude-code && claude login
 curl -fsSL https://bun.sh/install | bash
 
 # 3. Run the demo
-bunx shibaki@latest demo
+bunx shibaki-cli@latest demo
 ```
 
 The demo writes intentional bugs into a fixture, lets Claude fix them, and
@@ -153,7 +153,7 @@ to the opus tier — no env vars, no API key.
 (Bun, Claude Code, API keys) and what's missing:
 
 ```bash
-bunx shibaki@latest
+bunx shibaki-cli@latest
 ```
 
 ### Plan mode — explicit pinning (CI / reproducibility)
@@ -186,7 +186,7 @@ Other supported critic providers: OpenAI (`OPENAI_API_KEY`), Anthropic API
 Install once so you can call `shibaki` directly without the `bunx` prefix:
 
 ```bash
-bun add -g shibaki
+bun add -g shibaki-cli
 # or, from a cloned repo:
 cd shibaki && bun link
 ```

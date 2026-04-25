@@ -44,7 +44,7 @@ async function main(): Promise<number> {
     case "version":
     case "--version":
     case "-v":
-      process.stdout.write("shibaki 0.2.0\n");
+      process.stdout.write("shibaki 0.2.1\n");
       return 0;
     default: {
       const known = ["run", "demo", "doctor", "audit-publish", "version"];

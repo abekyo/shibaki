@@ -1,13 +1,13 @@
 {
-  "name": "shibaki",
-  "version": "0.2.0",
+  "name": "shibaki-cli",
+  "version": "0.2.1",
   "description": "Slap your AI agent when it drifts off-task. A 30-second human meta-correction layer for AI coding agents.",
   "license": "MIT",
   "author": "Opportunity Inc. <info@opport.jp> (https://www.opport.jp)",
   "homepage": "https://github.com/abekyo/shibaki",
   "repository": {
     "type": "git",
-    "url": "https://github.com/abekyo/shibaki.git"
+    "url": "git+https://github.com/abekyo/shibaki.git"
   },
   "bugs": {
     "url": "https://github.com/abekyo/shibaki/issues",
@@ -37,7 +37,7 @@
     "access": "public"
   },
   "bin": {
-    "shibaki": "./bin/shibaki.ts"
+    "shibaki": "bin/shibaki.ts"
   },
   "scripts": {
     "start": "bun run bin/shibaki.ts",

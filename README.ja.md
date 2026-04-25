@@ -127,7 +127,7 @@ npm install -g @anthropic-ai/claude-code && claude login
 curl -fsSL https://bun.sh/install | bash
 
 # 3. demo を走らせる
-bunx shibaki@latest demo
+bunx shibaki-cli@latest demo
 ```
 
 demo は fixture に意図的なバグを書き込んで Claude に直させ、テストを回し直す
@@ -149,7 +149,7 @@ critic に割り当てる — env 設定も API key も要らない。
 何が揃ってて何が足りないかをリストする:
 
 ```bash
-bunx shibaki@latest
+bunx shibaki-cli@latest
 ```
 
 ### Plan mode — 明示固定（CI / 再現性）
@@ -182,7 +182,7 @@ export LLM_PROVIDER_CRITICAL=gemini
 `bunx` prefix なしで `shibaki` を直接呼びたい場合:
 
 ```bash
-bun add -g shibaki
+bun add -g shibaki-cli
 # clone 済みなら:
 cd shibaki && bun link
 ```

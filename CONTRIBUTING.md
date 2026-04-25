@@ -123,7 +123,7 @@ git remote add origin git@github.com:abekyo/shibaki.git
 git push -u origin main
 
 # 8. Publish to npm — pair this with step 7 atomically. The README's
-#    onboarding flow (`bunx shibaki@latest`) returns 404 until the package
+#    onboarding flow (`bunx shibaki-cli@latest`) returns 404 until the package
 #    exists on npm; if you push the README first, visitors in that window
 #    bounce.
 npm login                 # if not already
@@ -147,7 +147,7 @@ npm publish --access public
   about to be pushed. Running it earlier scans something you might modify
   before push.
 - **`npm publish` paired with the GitHub push** because the README's first
-  command is `bunx shibaki@latest`. If you push the README to GitHub before
+  command is `bunx shibaki-cli@latest`. If you push the README to GitHub before
   publishing, anyone visiting the repo in that window gets a 404 from npm
   and bounces. The two operations are one atomic release.
 
